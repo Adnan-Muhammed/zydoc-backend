@@ -1,3 +1,5 @@
+//  zydoc-backend/src/usecases/auth/RefreshToken.js
+
 export class RefreshToken {
     constructor(userRepository, authService) {
         this.userRepository = userRepository;

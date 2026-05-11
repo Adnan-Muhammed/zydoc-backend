@@ -2,22 +2,20 @@ import express from 'express';
 import { protect } from '../middleware/authMiddleware.js';
 import { adminOnly } from '../middleware/adminMiddleware.js';
 
-// Frameworks & Drivers
-import UserModel from '../../database/models/UserModel.js';
 
 // Interface Adapters
-import { MongoUserRepository } from '../../../interface_adapters/storage/MongoUserRepository.js';
-import { JwtService } from '../../../interface_adapters/security/JwtService.js';
-import { BcryptService } from '../../../interface_adapters/security/BcryptService.js';
-import { AdminUserController } from '../../../interface_adapters/controllers/AdminUserController.js';
+import { MongoUserRepository } from '../../infrastructure/repositories/MongoUserRepository.js';
+import { BcryptService } from '../../infrastructure/security/BcryptService.js'
+import { JwtService } from '../../infrastructure/security/JwtService.js';
+import { AdminUserController } from '../../presentation/controllers/AdminUserController.js';
 
 // Use Cases        
-import { ListUsers } from '../../../usecases/admin/ListUsers.js';
-import { CreateUser } from '../../../usecases/admin/CreateUser.js';
-import { UpdateUser } from '../../../usecases/admin/UpdateUser.js';
-import { GetUser } from '../../../usecases/admin/GetUser.js';
-import { DeleteUser } from '../../../usecases/admin/DeleteUser.js'; // Handles both soft and hard delete logic if designed that way
-import { RestoreUser } from '../../../usecases/admin/RestoreUser.js';
+import { ListUsers } from '../../application/usecases/admin/ListUsers.js';
+import { CreateUser } from '../../application/usecases/admin/CreateUser.js';
+import { UpdateUser } from '../../application/usecases/admin/UpdateUser.js';
+import { GetUser } from '../../application/usecases/admin/GetUser.js';
+import { DeleteUser } from '../../application/usecases/admin/DeleteUser.js'; // Handles both soft and hard delete logic if designed that way
+import { RestoreUser } from '../../application/usecases/admin/RestoreUser.js';
 
 const router = express.Router();
 

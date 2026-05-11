@@ -27,10 +27,11 @@ export class AdminLoginUser {
         const accessToken = this.authService.generateAccessToken(user);
         const refreshToken = this.authService.generateRefreshToken(user);
 
+        const requires2FA = true;
         user.refreshToken = refreshToken;
         user.lastLogin = new Date();
         await this.userRepository.update(user);
 
-        return { user, accessToken, refreshToken };
+        return { user, accessToken, refreshToken, requires2FA };
     }
 }

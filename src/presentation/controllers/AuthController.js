@@ -155,7 +155,7 @@
 
 
 
-
+// zydoc-backend/src/interface_adapters/controllers/AuthController.js
 export class AuthController {
     constructor(
         signupUser,
@@ -176,8 +176,11 @@ export class AuthController {
     // ✅ GET CURRENT USER
     async getCurrentUser(req, res) {
         try {
-            const userId = req.user.id;
+            const userId = req.user?.id;
 
+            if (!userId) {
+                return res.status(401).json({ message: "Unauthorized" });
+            }
             const user = await this.getUserProfile.execute(userId);
 
             res.status(200).json({
@@ -208,6 +211,8 @@ export class AuthController {
 
     // ✅ SIGNUP
     async signup(req, res) {
+
+
         try {
             const { user, accessToken, refreshToken } =
                 await this.signupUser.execute(req.body);
@@ -218,7 +223,7 @@ export class AuthController {
                 secure: process.env.NODE_ENV === "production",
                 sameSite: "lax",
                 path: "/", // ✅ IMPORTANT
-                maxAge: 15 * 60 * 1000,
+                maxAge: 2 * 60 * 1000,
             });
 
             res.cookie("refreshToken", refreshToken, {
@@ -226,7 +231,7 @@ export class AuthController {
                 secure: process.env.NODE_ENV === "production",
                 sameSite: "lax",
                 path: "/", // ✅ IMPORTANT
-                maxAge: 7 * 24 * 60 * 60 * 1000,
+                maxAge: 5 * 60 * 1000,
             });
 
             res.status(201).json({
@@ -260,7 +265,7 @@ export class AuthController {
                 secure: process.env.NODE_ENV === "production",
                 sameSite: "lax",
                 path: "/", // ✅ REQUIRED
-                maxAge: 15 * 60 * 1000, // 15 min
+                maxAge: 2 * 60 * 1000, // 2 min
             });
 
             // 🔥 REFRESH TOKEN COOKIE
@@ -269,12 +274,13 @@ export class AuthController {
                 secure: process.env.NODE_ENV === "production",
                 sameSite: "lax",
                 path: "/", // ✅ REQUIRED
-                maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+                maxAge: 5 * 60 * 1000, // 7 days
             });
 
             res.status(200).json({
                 success: true,
                 message: "Login successful",
+
                 user: this._mapUserResponse(user),
             });
         } catch (error) {
@@ -295,7 +301,7 @@ export class AuthController {
     // ✅ ADMIN LOGIN
     async adminLogin(req, res) {
         try {
-            const { user, accessToken, refreshToken } =
+            const { user, accessToken, refreshToken, requires2FA } =
                 await this.adminLoginUser.execute(req.body);
 
             res.cookie("accessToken", accessToken, {
@@ -303,7 +309,7 @@ export class AuthController {
                 secure: process.env.NODE_ENV === "production",
                 sameSite: "lax",
                 path: "/",
-                maxAge: 15 * 60 * 1000,
+                maxAge: 2 * 60 * 1000,
             });
 
             res.cookie("refreshToken", refreshToken, {
@@ -311,12 +317,14 @@ export class AuthController {
                 secure: process.env.NODE_ENV === "production",
                 sameSite: "lax",
                 path: "/",
-                maxAge: 7 * 24 * 60 * 60 * 1000,
+                maxAge: 5 * 60 * 1000,
             });
 
             res.status(200).json({
                 success: true,
                 message: "Admin login successful",
+                requires2FA, // just try
+
                 user: this._mapUserResponse(user),
             });
         } catch (error) {
@@ -336,19 +344,38 @@ export class AuthController {
 
     // ✅ REFRESH TOKEN
     async refresh(req, res) {
+        console.log(1234567);
+        console.log(1234567);
+        console.log('access token is  expired so trying to refresh ');
+        console.log(1234567);
+        console.log(1234567);
+
+
         try {
             const token = req.cookies.refreshToken;
+            console.log("COOKIES RECEIVED:", req.cookies);
+            console.log("COOKIES Token refreshhhh:", token);
+            console.log("COOKIES RECEIVED:", req.cookies);
+
+            console.log(token, "refreshToken");
 
             const { accessToken, user } =
                 await this.refreshToken.execute(token);
+            console.log(accessToken, "refreshed accessToken");
 
+
+            console.log(accessToken, user, 4444545454545)
             res.cookie("accessToken", accessToken, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
                 sameSite: "lax",
                 path: "/",
-                maxAge: 15 * 60 * 1000,
+                maxAge: 2 * 60 * 1000,
             });
+            console.log("COOKIE SET SENT TO BROWSER");
+            console.log("COOKIE SET SENT TO BROWSER");
+            console.log("COOKIE SET SENT TO BROWSER");
+            console.log(1234567890);
 
             res.json({
                 success: true,

@@ -1,6 +1,9 @@
+
+// zydoc-backend/src/infrastructure/repositories/MongoUserRepository.js
+
 import { UserRepository } from '../../domain/repositories/UserRepository.js';
 import { User } from '../../domain/entities/User.js';
-import UserModel from '../../frameworks_networks/database/models/UserModel.js';
+import UserModel from '../database/models/UserModel.js';
 
 export class MongoUserRepository extends UserRepository {
     async create(userEntity) {

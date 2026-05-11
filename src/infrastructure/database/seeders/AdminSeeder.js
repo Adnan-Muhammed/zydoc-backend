@@ -1,5 +1,5 @@
 import UserModel from '../models/UserModel.js';
-import { BcryptService } from '../../../interface_adapters/security/BcryptService.js';
+import { BcryptService } from '../../security/BcryptService.js';
 
 export const seedAdmin = async () => {
     try {

@@ -5,7 +5,7 @@ export class JwtService {
         return jwt.sign(
             { id: user.id || user._id, role: user.role, name: user.name },
             process.env.JWT_SECRET || 'access_secret',
-            { expiresIn: process.env.ACCESS_TOKEN_EXPIRE || '3m' }
+            { expiresIn: process.env.ACCESS_TOKEN_EXPIRE || '2m' }
         );
     }
 

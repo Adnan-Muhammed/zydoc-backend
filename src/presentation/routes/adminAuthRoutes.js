@@ -1,13 +1,13 @@
 import express from 'express';
 
 // Interface Adapters
-import { MongoUserRepository } from '../../../interface_adapters/storage/MongoUserRepository.js';
-import { JwtService } from '../../../interface_adapters/security/JwtService.js';
-import { BcryptService } from '../../../interface_adapters/security/BcryptService.js';
-import { AuthController } from '../../../interface_adapters/controllers/AuthController.js';
+import { MongoUserRepository } from '../../infrastructure/repositories/MongoUserRepository.js';
+import { JwtService } from '../../infrastructure/security/JwtService.js';
+import { BcryptService } from '../../infrastructure/security/BcryptService.js';
+import { AuthController } from '../../presentation/controllers/AuthController.js';
 
 // Use Cases
-import { AdminLoginUser } from '../../../usecases/auth/AdminLoginUser.js';
+import { AdminLoginUser } from '../../application/usecases/auth/AdminLoginUser.js';
 
 const router = express.Router();
 

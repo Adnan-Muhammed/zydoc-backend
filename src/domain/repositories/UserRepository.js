@@ -1,3 +1,4 @@
+// zydoc-backend/src/domain/repositories/UserRepository.js
 // This is conceptually an interface. In JS, we can document it or use a base class.
 
 export class UserRepository {

@@ -1,18 +1,18 @@
 import express from 'express';
-import { protect } from '../../../frameworks_networks/web/middleware/authMiddleware.js'; // Assuming middleware exists or needs creation
+import { protect } from '../middleware/authMiddleware.js'; // Assuming middleware exists or needs creation
 
 // Frameworks & Drivers
-import UserModel from '../../database/models/UserModel.js';
+import UserModel from '../../infrastructure/database/models/UserModel.js';
 
 // Interface Adapters
-import { MongoUserRepository } from '../../../interface_adapters/storage/MongoUserRepository.js';
-import { JwtService } from '../../../interface_adapters/security/JwtService.js';
-import { BcryptService } from '../../../interface_adapters/security/BcryptService.js';
-import { UserController } from '../../../interface_adapters/controllers/UserController.js';
+import { MongoUserRepository } from '../../infrastructure/repositories/MongoUserRepository.js';
+import { JwtService } from '../../infrastructure/security/JwtService.js';
+import { BcryptService } from '../../infrastructure/security/BcryptService.js';
+import { UserController } from '../controllers/UserController.js';
 
 // Use Cases
-import { GetUserProfile } from '../../../usecases/user/GetUserProfile.js';
-import { UpdateUserProfile } from '../../../usecases/user/UpdateUserProfile.js';
+import { GetUserProfile } from '../../application/usecases/user/GetUserProfile.js';
+import { UpdateUserProfile } from '../../application/usecases/user/UpdateUserProfile.js';
 
 const router = express.Router();
 

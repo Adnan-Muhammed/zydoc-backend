@@ -1,4 +1,5 @@
-import { User } from '../../domain/entities/User.js';
+// zydoc-backend/src/usecases/auth/SignupUser.js
+import { User } from '../../../domain/entities/User.js';
 
 export class SignupUser {
     constructor(userRepository, authService) {

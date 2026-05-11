@@ -1,20 +1,21 @@
-import express from 'express';
 
+//  zydoc-backend/src/frameworks_networks/web/routes/authRoutes.js
+import express from 'express';
 // Frameworks & Drivers
-import UserModel from '../../database/models/UserModel.js';
+import UserModel from '../../infrastructure/database/models/UserModel.js';
 
 // Interface Adapters
-import { MongoUserRepository } from '../../../interface_adapters/storage/MongoUserRepository.js';
-import { JwtService } from '../../../interface_adapters/security/JwtService.js';
-import { BcryptService } from '../../../interface_adapters/security/BcryptService.js';
-import { AuthController } from '../../../interface_adapters/controllers/AuthController.js';
+import { MongoUserRepository } from '../../infrastructure/repositories/MongoUserRepository.js';
+import { JwtService } from '../../infrastructure/security/JwtService.js';
+import { BcryptService } from '../../infrastructure/security/BcryptService.js';
+import { AuthController } from '../controllers/AuthController.js';
 
 // Use Cases
-import { SignupUser } from '../../../usecases/auth/SignupUser.js';
-import { LoginUser } from '../../../usecases/auth/LoginUser.js';
-import { RefreshToken } from '../../../usecases/auth/RefreshToken.js';
-import { LogoutUser } from '../../../usecases/auth/LogoutUser.js';
-import { GetUserProfile } from '../../../usecases/user/GetUserProfile.js';
+import { SignupUser } from '../../application/usecases/auth/SignupUser.js';
+import { LoginUser } from '../../application/usecases/auth/LoginUser.js';
+import { RefreshToken } from '../../application/usecases/auth/RefreshToken.js';
+import { LogoutUser } from '../../application/usecases/auth/LogoutUser.js';
+import { GetUserProfile } from '../../application/usecases/user/GetUserProfile.js';
 import { redirectIfAuth, protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();

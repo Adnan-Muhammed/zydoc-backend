@@ -1,3 +1,5 @@
+
+// zydoc-backend/server.js
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
@@ -6,14 +8,14 @@ import morgan from 'morgan';
 import helmet from 'helmet';
 
 // Database
-import connectDB from './src/frameworks_networks/database/connection.js';
+import connectDB from './src/infrastructure/database/connection.js';
 
 // Routes
-import authRoutes from './src/frameworks_networks/web/routes/authRoutes.js';
-import adminAuthRoutes from './src/frameworks_networks/web/routes/adminAuthRoutes.js';
-import userRoutes from './src/frameworks_networks/web/routes/userRoutes.js';
-import adminRoutes from './src/frameworks_networks/web/routes/adminRoutes.js';
-import { seedAdmin } from './src/frameworks_networks/database/seeders/AdminSeeder.js';
+import authRoutes from './src/presentation/routes/authRoutes.js';
+import adminAuthRoutes from './src/presentation/routes/adminAuthRoutes.js';
+import userRoutes from './src/presentation/routes/userRoutes.js';
+import adminRoutes from './src/presentation/routes/adminRoutes.js';
+import { seedAdmin } from './src/infrastructure/database/seeders/AdminSeeder.js';
 
 // Config
 dotenv.config();
@@ -27,10 +29,17 @@ app.use(cookieParser());
 app.use(morgan('dev'));   // it shows what's happening through (logs)
 app.use(helmet());        // Protect the app (security)
 
+// app.use(cors({
+//     origin: process.env.CLIENT_URL || 'http://localhost:3000',
+//     credentials: true
+// }));
+
 app.use(cors({
     origin: process.env.CLIENT_URL || 'http://localhost:3000',
-    credentials: true
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 }));
+
 
 // Debug Middleware
 if (process.env.NODE_ENV === 'development') {
@@ -47,10 +56,16 @@ connectDB().then(() => {
     seedAdmin();
 });
 
+
+
 // Routes
 app.use('/api/auth', authRoutes);
 
+console.log(1111);
+
+
 app.use('/api/admin/auth', adminAuthRoutes);
+
 app.use('/api/user', userRoutes);
 app.use('/api/admin/users', adminRoutes);
 
