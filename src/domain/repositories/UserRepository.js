@@ -9,4 +9,6 @@ export class UserRepository {
     async count(query) { throw new Error('Method not implemented'); }
     async find(query, options) { throw new Error('Method not implemented'); }
     async delete(id) { throw new Error('Method not implemented'); }
+    async getPublicDoctors(filters, options) { throw new Error('Method not implemented'); }
+    async getPublicDoctorById(id) { throw new Error('Method not implemented'); }
 }

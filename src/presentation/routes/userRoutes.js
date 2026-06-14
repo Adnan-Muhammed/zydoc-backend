@@ -2,7 +2,6 @@ import express from 'express';
 import { protect } from '../middleware/authMiddleware.js'; // Assuming middleware exists or needs creation
 
 // Frameworks & Drivers
-import UserModel from '../../infrastructure/database/models/UserModel.js';
 
 // Interface Adapters
 import { MongoUserRepository } from '../../infrastructure/repositories/MongoUserRepository.js';

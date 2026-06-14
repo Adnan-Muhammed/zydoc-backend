@@ -1,3 +1,6 @@
+
+// src/application/usecases/auth/AdminLoginUser.js
+
 export class AdminLoginUser {
     constructor(userRepository, authService) {
         this.userRepository = userRepository;

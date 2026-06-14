@@ -6,13 +6,11 @@ export class UserController {
 
     async getProfile(req, res) {
         try {
-            // req.user is set by auth middleware
             const userId = req.user.id;
             const user = await this.getUserProfile.execute(userId);
 
-            // Remove sensitive fields
             const userResponse = {
-                _id: user.id || user._id, // Handle both entity and mongo object if leak happens
+                _id: user.id || user._id,
                 name: user.name,
                 email: user.email,
                 role: user.role,

@@ -58,6 +58,7 @@ router.post('/', (req, res) => adminUserController.createUser(req, res));
 router.put('/:id', (req, res) => adminUserController.updateUser(req, res));
 router.put('/soft-delete/:id', (req, res) => adminUserController.softDeleteUser(req, res));
 router.put('/restore/:id', (req, res) => adminUserController.restoreUser(req, res));
+router.put('/doctors/:id/approve', (req, res) => adminUserController.approveDoctor(req, res));
 router.delete('/:id', (req, res) => adminUserController.deleteUser(req, res));
 
 export default router;

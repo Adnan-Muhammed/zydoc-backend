@@ -203,9 +203,18 @@ import jwt from "jsonwebtoken";
 
 export const protect = (req, res, next) => {
     try {
-        const token = req.cookies?.accessToken;
+        const token = (req.cookies?.accessToken||req.headers.authorization.split(" ")[1])
 
-        console.log("cookies:", req.cookies);
+        console.log(123456);
+
+
+        // //  just test in backend to backend
+        // if (!token && req.headers.authorization?.startsWith("Bearer ")) {
+        //     token = req.headers.authorization.split(" ")[1];
+        // }
+        // //  just test in backend to backend
+
+        console.log(6666);
 
         if (!token) {
             return res.status(401).json({ message: "No token" });
@@ -219,7 +228,6 @@ export const protect = (req, res, next) => {
         req.user = decoded;
         next();
     } catch (err) {
-        console.log("JWT error:", err.message);
 
         return res.status(401).json({ message: "Invalid token" });
     }

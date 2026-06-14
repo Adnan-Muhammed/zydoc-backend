@@ -1,3 +1,6 @@
+
+// src/application/usecases/auth/LoginUser.js
+
 export class LoginUser {
     constructor(userRepository, authService) {
         this.userRepository = userRepository;

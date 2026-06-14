@@ -18,7 +18,6 @@ export class AdminUserController {
     }
 
     async getUsers(req, res) {
-        console.log('AdminUserController.getUsers: entered'); // TRACE
         try {
             const { page, limit, keyword, role, isDeleted } = req.query;
             const result = await this.listUsersUseCase.execute({ page, limit, keyword, role, isDeleted });
@@ -41,7 +40,7 @@ export class AdminUserController {
 
     async createUser(req, res) {
         try {
-            // req.user.id is the admin creating the user
+
             const createdBy = req.user.id;
             const { name, email, password, isAdmin } = req.body;
 
@@ -132,7 +131,6 @@ export class AdminUserController {
     }
 
     async deleteUser(req, res) {
-        // Hard delete
         try {
             const adminId = req.user.id;
             const id = req.params.id;
@@ -176,6 +174,26 @@ export class AdminUserController {
             if (error.message === 'User not found') {
                 return res.status(404).json({ success: false, message: error.message });
             }
+            res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async approveDoctor(req, res) {
+        try {
+            const doctorId = req.params.id;
+            
+            const SharedUser = (await import('../../infrastructure/database/models/SharedUser.js')).default;
+            const DoctorProfile = (await import('../../infrastructure/database/models/DoctorProfile.js')).default;
+
+            const sharedUser = await SharedUser.findById(doctorId);
+            if (!sharedUser || sharedUser.role !== 'doctor') {
+                return res.status(404).json({ success: false, message: 'Doctor not found' });
+            }
+
+            await DoctorProfile.findByIdAndUpdate(sharedUser.profileId, { verificationStatus: 'approved' });
+
+            res.json({ success: true, message: 'Doctor approved successfully' });
+        } catch (error) {
             res.status(500).json({ success: false, message: error.message });
         }
     }

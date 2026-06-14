@@ -1,9 +1,18 @@
+
+// src/infrastructure/security/JwtService.js
+
 import jwt from 'jsonwebtoken';
 
 export class JwtService {
     generateAccessToken(user) {
         return jwt.sign(
-            { id: user.id || user._id, role: user.role, name: user.name },
+            { 
+                id: user.id || user._id, 
+                role: user.role, 
+                name: user.name,
+                isProfileCompleted: user.isProfileCompleted || false,
+                isVerifiedByAdmin: user.isVerifiedByAdmin || false
+            },
             process.env.JWT_SECRET || 'access_secret',
             { expiresIn: process.env.ACCESS_TOKEN_EXPIRE || '2m' }
         );

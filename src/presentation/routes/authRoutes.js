@@ -1,17 +1,20 @@
 
 //  zydoc-backend/src/frameworks_networks/web/routes/authRoutes.js
 import express from 'express';
-// Frameworks & Drivers
-import UserModel from '../../infrastructure/database/models/UserModel.js';
 
 // Interface Adapters
 import { MongoUserRepository } from '../../infrastructure/repositories/MongoUserRepository.js';
 import { JwtService } from '../../infrastructure/security/JwtService.js';
 import { BcryptService } from '../../infrastructure/security/BcryptService.js';
 import { AuthController } from '../controllers/AuthController.js';
+import { MailService } from '../../infrastructure/security/MailService.js';
+import { ResendOtp } from '../../application/usecases/auth/ResendOtp.js';
 
 // Use Cases
 import { SignupUser } from '../../application/usecases/auth/SignupUser.js';
+import { VerifyOtp } from '../../application/usecases/auth/VerifyOtp.js';
+import { OtpService } from '../../infrastructure/security/OtpService.js';
+
 import { LoginUser } from '../../application/usecases/auth/LoginUser.js';
 import { RefreshToken } from '../../application/usecases/auth/RefreshToken.js';
 import { LogoutUser } from '../../application/usecases/auth/LogoutUser.js';
@@ -24,10 +27,9 @@ const router = express.Router();
 const userRepository = new MongoUserRepository();
 const jwtService = new JwtService();
 const bcryptService = new BcryptService();
+const otpService = new OtpService(); // Required for OTP generation/validation
+const mailService = new MailService();
 
-// Service wrapper to match expected interface if needed, or just pass directly if methods match
-// In UseCases we call: authService.hashPassword, comparePassword, generateAccessToken, generateRefreshToken, verifyRefreshToken
-// We can combine Jwt and Bcrypt services into one object or class for the UseCase
 const authService = {
     hashPassword: (pwd) => bcryptService.hashPassword(pwd),
     comparePassword: (pwd, hash) => bcryptService.comparePassword(pwd, hash),
@@ -36,7 +38,10 @@ const authService = {
     verifyRefreshToken: (token) => jwtService.verifyRefreshToken(token),
 };
 
-const signupUserUseCase = new SignupUser(userRepository, authService);
+// const signupUserUseCase = new SignupUser(userRepository, authService);
+const signupUserUseCase = new SignupUser(userRepository, authService, otpService, mailService);
+const verifyOtpUseCase = new VerifyOtp(userRepository, authService, otpService); // <--- ADD THIS LINE
+const resendOtpUseCase = new ResendOtp(userRepository, otpService, mailService);
 const loginUserUseCase = new LoginUser(userRepository, authService);
 const refreshTokenUseCase = new RefreshToken(userRepository, authService);
 const logoutUserUseCase = new LogoutUser(userRepository);
@@ -48,13 +53,29 @@ const authController = new AuthController(
     null, // AdminLogin moved to separate route
     refreshTokenUseCase,
     logoutUserUseCase,
-    getUserProfileUseCase
+    getUserProfileUseCase,
+    verifyOtpUseCase, // Pass this to controller
+    resendOtpUseCase,
 );
 
 
 
 // Routes
-router.post('/signup', redirectIfAuth, (req, res) => authController.signup(req, res));
+router.post('/signup',
+    ((req, res, next) => { return console.log('req', req.body), next() }),
+    redirectIfAuth,
+    (req, res) => authController.signup(req, res));
+
+
+router.post('/verify-otp',
+    ((req, res, next) => { return console.log('req', req.body), next() }),
+    (req, res) => authController.verifyOtp(req, res)); // Added
+
+router.post('/resend-otp',
+    ((req, res, next) => { return console.log('req', req.body), next() }),
+    ((req, res, next) => { return console.log('resend otp  route'), next() }),
+    (req, res) => authController.resendOtp(req, res)); // 4. ADD ROUTE
+
 router.post('/login', redirectIfAuth, (req, res) => authController.login(req, res));
 router.post('/refresh', (req, res) => authController.refresh(req, res));
 router.post('/logout', (req, res) => authController.logout(req, res));
