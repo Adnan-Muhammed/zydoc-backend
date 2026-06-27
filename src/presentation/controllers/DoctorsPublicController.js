@@ -12,7 +12,7 @@ export class DoctorsPublicController {
       
       const filters = {
         search,
-        specialty,
+        specialty, 
         consultationType,
         minRating
       };

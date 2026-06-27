@@ -8,7 +8,7 @@ import { adminOnly } from "../middleware/adminMiddleware.js";
 // Repository
 import { MongoUserRepository } from "../../infrastructure/repositories/MongoUserRepository.js";
 
-// UseCase
+// UseCase 
 import { GetDoctorsUseCase } from "../../application/usecases/admin/GetDoctorsUseCase.js";
 
 // Controller

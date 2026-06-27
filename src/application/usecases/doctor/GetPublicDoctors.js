@@ -7,3 +7,4 @@ export class GetPublicDoctors {
     return await this.userRepository.getPublicDoctors(filters, options);
   }
 }
+ 

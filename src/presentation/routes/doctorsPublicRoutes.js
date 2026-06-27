@@ -15,7 +15,7 @@ const doctorsPublicController = new DoctorsPublicController(
   getPublicDoctorsUseCase,
   getPublicDoctorByIdUseCase
 );
-
+ 
 // Endpoints 
 
 const test = (req,res,next)=>{

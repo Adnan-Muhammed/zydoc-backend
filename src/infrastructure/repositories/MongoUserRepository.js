@@ -240,6 +240,8 @@ export class MongoUserRepository extends UserRepository {
     return users.map((user) => this._toEntity(user));
   }
 
+
+
   async getApprovedDoctors() {
     // 1. Query all users with role 'doctor'
     // 2. Populate their profile, BUT ONLY if verificationStatus is 'approved'
@@ -265,6 +267,7 @@ export class MongoUserRepository extends UserRepository {
     yearsOfExperience: user.profileId.yearsOfExperience,
   }));
   }
+
 
 
   async getPublicDoctors(filters = {}, options = {}) {
