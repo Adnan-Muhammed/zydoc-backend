@@ -18,6 +18,14 @@ export class UserController {
                 updatedAt: user.updatedAt
             };
 
+            if (user.role === 'doctor') {
+                userResponse.medicalCertificateStatus = user.medicalCertificateStatus;
+                userResponse.medicalCertificateRejectionReason = user.medicalCertificateRejectionReason;
+                userResponse.governmentIdStatus = user.governmentIdStatus;
+                userResponse.governmentIdRejectionReason = user.governmentIdRejectionReason;
+                userResponse.qualifications = user.qualifications;
+            }
+
             res.json({ success: true, user: userResponse });
         } catch (error) {
             if (error.message === 'User not found' || error.message === 'Your account has been deactivated') {
@@ -48,6 +56,14 @@ export class UserController {
                 createdAt: updatedUser.createdAt,
                 updatedAt: updatedUser.updatedAt
             };
+
+            if (updatedUser.role === 'doctor') {
+                userResponse.medicalCertificateStatus = updatedUser.medicalCertificateStatus;
+                userResponse.medicalCertificateRejectionReason = updatedUser.medicalCertificateRejectionReason;
+                userResponse.governmentIdStatus = updatedUser.governmentIdStatus;
+                userResponse.governmentIdRejectionReason = updatedUser.governmentIdRejectionReason;
+                userResponse.qualifications = updatedUser.qualifications;
+            }
 
             res.json({ success: true, message: "Profile updated successfully", user: userResponse });
         } catch (error) {

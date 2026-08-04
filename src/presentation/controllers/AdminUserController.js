@@ -190,9 +190,192 @@ export class AdminUserController {
                 return res.status(404).json({ success: false, message: 'Doctor not found' });
             }
 
-            await DoctorProfile.findByIdAndUpdate(sharedUser.profileId, { verificationStatus: 'approved' });
+            const doctorProfile = await DoctorProfile.findById(sharedUser.profileId);
+            if (doctorProfile) {
+                doctorProfile.verificationStatus = 'approved';
+                doctorProfile.medicalCertificateStatus = 'approved';
+                doctorProfile.governmentIdStatus = 'approved';
+                if (doctorProfile.qualifications && doctorProfile.qualifications.length > 0) {
+                    doctorProfile.qualifications.forEach(q => {
+                        q.certificateStatus = 'approved';
+                    });
+                }
+                await doctorProfile.save();
+            }
 
             res.json({ success: true, message: 'Doctor approved successfully' });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async rejectDoctor(req, res) {
+        try {
+            const doctorId = req.params.id;
+            
+            const SharedUser = (await import('../../infrastructure/database/models/SharedUser.js')).default;
+            const DoctorProfile = (await import('../../infrastructure/database/models/DoctorProfile.js')).default;
+
+            const sharedUser = await SharedUser.findById(doctorId);
+            if (!sharedUser || sharedUser.role !== 'doctor') {
+                return res.status(404).json({ success: false, message: 'Doctor not found' });
+            }
+
+            const doctorProfile = await DoctorProfile.findById(sharedUser.profileId);
+            if (doctorProfile) {
+                doctorProfile.verificationStatus = 'rejected';
+                doctorProfile.medicalCertificateStatus = 'rejected';
+                doctorProfile.governmentIdStatus = 'rejected';
+                if (doctorProfile.qualifications && doctorProfile.qualifications.length > 0) {
+                    doctorProfile.qualifications.forEach(q => {
+                        q.certificateStatus = 'rejected';
+                    });
+                }
+                await doctorProfile.save();
+            }
+
+            res.json({ success: true, message: 'Doctor rejected successfully' });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async suspendDoctor(req, res) {
+        try {
+            const doctorId = req.params.id;
+            
+            const SharedUser = (await import('../../infrastructure/database/models/SharedUser.js')).default;
+            const DoctorProfile = (await import('../../infrastructure/database/models/DoctorProfile.js')).default;
+
+            const sharedUser = await SharedUser.findById(doctorId);
+            if (!sharedUser || sharedUser.role !== 'doctor') {
+                return res.status(404).json({ success: false, message: 'Doctor not found' });
+            }
+
+            // Update account status directly on SharedUser
+            await SharedUser.findByIdAndUpdate(doctorId, { accountStatus: 'suspended' });
+
+            res.json({ success: true, message: 'Doctor suspended successfully' });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async unsuspendDoctor(req, res) {
+        try {
+            const doctorId = req.params.id;
+            
+            const SharedUser = (await import('../../infrastructure/database/models/SharedUser.js')).default;
+            const DoctorProfile = (await import('../../infrastructure/database/models/DoctorProfile.js')).default;
+
+            const sharedUser = await SharedUser.findById(doctorId);
+            if (!sharedUser || sharedUser.role !== 'doctor') {
+                return res.status(404).json({ success: false, message: 'Doctor not found' });
+            }
+
+            // Re-activate account status
+            await SharedUser.findByIdAndUpdate(doctorId, { accountStatus: 'active' });
+
+            res.json({ success: true, message: 'Doctor unsuspended successfully' });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async updateQualificationStatus(req, res) {
+        try {
+            const { id: doctorId, qualId } = req.params;
+            const { status, reason } = req.body;
+            
+            const SharedUser = (await import('../../infrastructure/database/models/SharedUser.js')).default;
+            const DoctorProfile = (await import('../../infrastructure/database/models/DoctorProfile.js')).default;
+
+            const sharedUser = await SharedUser.findById(doctorId);
+            if (!sharedUser || sharedUser.role !== 'doctor') {
+                return res.status(404).json({ success: false, message: 'Doctor not found' });
+            }
+
+            const doctorProfile = await DoctorProfile.findById(sharedUser.profileId);
+            if (!doctorProfile) {
+                return res.status(404).json({ success: false, message: 'Doctor profile not found' });
+            }
+
+            const qualification = doctorProfile.qualifications.find(q => q.id === qualId);
+            if (!qualification) {
+                return res.status(404).json({ success: false, message: 'Qualification not found' });
+            }
+
+            qualification.certificateStatus = status;
+            if (status === 'rejected') {
+                qualification.rejectionReason = reason || "";
+            } else if (status === 'approved') {
+                qualification.rejectionReason = "";
+            }
+
+            // Check if profile should be fully approved
+            if (doctorProfile.medicalCertificateStatus === 'approved' && 
+                doctorProfile.governmentIdStatus === 'approved' && 
+                (doctorProfile.qualifications || []).every(q => q.certificateStatus === 'approved')) {
+                doctorProfile.verificationStatus = 'approved';
+            }
+
+            await doctorProfile.save();
+
+            res.json({ success: true, message: `Qualification certificate marked as ${status}`, verificationStatus: doctorProfile.verificationStatus });
+        } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+        }
+    }
+
+    async updateDocumentStatus(req, res) {
+        try {
+            const { id: doctorId, docType } = req.params;
+            const { status, reason } = req.body;
+            
+            const SharedUser = (await import('../../infrastructure/database/models/SharedUser.js')).default;
+            const DoctorProfile = (await import('../../infrastructure/database/models/DoctorProfile.js')).default;
+
+            const sharedUser = await SharedUser.findById(doctorId);
+            if (!sharedUser || sharedUser.role !== 'doctor') {
+                return res.status(404).json({ success: false, message: 'Doctor not found' });
+            }
+
+            const validDocTypes = ['medicalCertificate', 'governmentId'];
+            if (!validDocTypes.includes(docType)) {
+                return res.status(400).json({ success: false, message: 'Invalid document type' });
+            }
+
+            const doctorProfile = await DoctorProfile.findById(sharedUser.profileId);
+            if (!doctorProfile) {
+                return res.status(404).json({ success: false, message: 'Doctor profile not found' });
+            }
+
+            if (docType === 'medicalCertificate') {
+                doctorProfile.medicalCertificateStatus = status;
+                if (status === 'rejected') {
+                    doctorProfile.medicalCertificateRejectionReason = reason || "";
+                } else if (status === 'approved') {
+                    doctorProfile.medicalCertificateRejectionReason = "";
+                }
+            } else if (docType === 'governmentId') {
+                doctorProfile.governmentIdStatus = status;
+                if (status === 'rejected') {
+                    doctorProfile.governmentIdRejectionReason = reason || "";
+                } else if (status === 'approved') {
+                    doctorProfile.governmentIdRejectionReason = "";
+                }
+            }
+
+            // Check if profile should be fully approved
+            if (doctorProfile.medicalCertificateStatus === 'approved' && 
+                doctorProfile.governmentIdStatus === 'approved' && 
+                (doctorProfile.qualifications || []).every(q => q.certificateStatus === 'approved')) {
+                doctorProfile.verificationStatus = 'approved';
+            }
+
+            await doctorProfile.save();
+
+            res.json({ success: true, message: `Document marked as ${status}`, verificationStatus: doctorProfile.verificationStatus });
         } catch (error) {
             res.status(500).json({ success: false, message: error.message });
         }

@@ -21,6 +21,21 @@ export class MongoUserRepository extends UserRepository {
   async createWithProfile(userEntity) {
     try {
       const roleLower = userEntity.role.toLowerCase();
+
+      if (roleLower === "unassigned") {
+        const sharedUser = await SharedUser.create({
+          email: userEntity.email,
+          password: userEntity.password,
+          role: userEntity.role,
+          otp: userEntity.otp,
+          isVerified: userEntity.isVerified,
+          isProfileCompleted: false,
+          googleName: userEntity.name,
+          googleAvatarUrl: userEntity.avatarUrl,
+        });
+        return this._toEntity(sharedUser, null);
+      }
+
       const ProfileModel = this._getModel(roleLower);
 
       // 1. Process optional name field. If missing, drop down to use email username handle
@@ -36,7 +51,7 @@ export class MongoUserRepository extends UserRepository {
         profileData = {
           firstName: nameParts[0] || "Pending",
           // Default to 'Onboarding' fallback since the front-end registration form skips last name values
-          lastName: nameParts.slice(1).join(" ") || "Onboarding",
+          lastName: nameParts.slice(1).join(" ") || "",
         };
       } else {
         profileData = { name: derivedRawName || "System Admin" };
@@ -67,20 +82,68 @@ export class MongoUserRepository extends UserRepository {
     }
   }
 
+  async assignRoleAndCreateProfile(userId, newRole) {
+    const roleLower = newRole.toLowerCase();
+    const ProfileModel = this._getModel(roleLower);
+
+    const sharedUser = await SharedUser.findById(userId);
+    if (!sharedUser) throw new Error("User not found");
+
+    let derivedRawName = sharedUser.googleName || (sharedUser.email ? sharedUser.email.split("@")[0] : "");
+    let avatarUrl = sharedUser.googleAvatarUrl || "";
+
+    let profileData = {};
+    if (roleLower === "doctor" || roleLower === "patient") {
+      const nameParts = derivedRawName.split(/\s+/);
+      profileData = {
+        firstName: nameParts[0] || "Pending",
+        lastName: nameParts.slice(1).join(" ") || "",
+        avatarUrl: avatarUrl,
+      };
+    }
+
+    const profile = await ProfileModel.create(profileData);
+
+    sharedUser.role = newRole;
+    sharedUser.profileId = profile._id;
+    sharedUser.roleModel = newRole.charAt(0).toUpperCase() + newRole.slice(1);
+
+    await sharedUser.save();
+
+    return this._toEntity(sharedUser, profile);
+  }
+
   async findByEmail(email) {
     const user = await SharedUser.findOne({ email })
-      .select("+password +refreshToken +otp.code +otp.expiresAt")
-      .populate("profileId");
+      .select("+password +refreshToken +otp.code +otp.expiresAt");
 
-    return user ? this._toEntity(user) : null;
+    if (!user) return null;
+
+    if (user.profileId && user.roleModel) {
+      await user.populate("profileId");
+    }
+
+    return this._toEntity(user);
   }
 
   async findById(id) {
-    const user = await SharedUser.findById(id)
-      .select("+password +refreshToken")
-      .populate("profileId");
+    const user = await SharedUser.findById(id).select("+password +refreshToken");
+    if (!user) return null;
 
-    return user ? this._toEntity(user) : null;
+    if (user.profileId && user.roleModel) {
+      await user.populate("profileId");
+    }
+
+    return this._toEntity(user);
+  }
+
+  async getProfile(userId, role) {
+    const user = await SharedUser.findById(userId);
+    if (!user) return null;
+
+    const ProfileModel = this._getModel(role || user.role);
+    const profile = await ProfileModel.findById(user.profileId);
+    return profile;
   }
 
   async update(userEntity) {
@@ -97,7 +160,7 @@ export class MongoUserRepository extends UserRepository {
     });
 
     // Parse runtime structural edits targeting base entities safely
-    if (userEntity.name) {
+    if (userEntity.name && userEntity.role !== 'unassigned') {
       const roleLower = userEntity.role.toLowerCase();
       const ProfileModel = this._getModel(roleLower);
       const userDoc = await SharedUser.findById(userEntity.id);
@@ -107,7 +170,7 @@ export class MongoUserRepository extends UserRepository {
         const nameParts = userEntity.name.trim().split(/\s+/);
         profileUpdateData = {
           firstName: nameParts[0],
-          lastName: nameParts.slice(1).join(" ") || "Onboarding",
+          lastName: nameParts.slice(1).join(" ") || "",
         };
       } else {
         profileUpdateData = { name: userEntity.name };
@@ -141,12 +204,46 @@ export class MongoUserRepository extends UserRepository {
       if (!user) throw new Error("User not found");
       if (user.role !== "doctor") throw new Error("User is not a doctor");
 
+      if (updateData.consultationSettings) {
+        const currentProfile = await Doctor.findById(user.profileId).lean();
+
+        // Deep copy workingHours to avoid mutating the lean object directly in a weird way
+        let newWorkingHours = updateData.workingHours ? JSON.parse(JSON.stringify(updateData.workingHours)) : (currentProfile.workingHours ? JSON.parse(JSON.stringify(currentProfile.workingHours)) : { online: {}, offline: {} });
+        let modified = false;
+
+        const days = ['mondayToFriday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+        if (updateData.consultationSettings.video && updateData.consultationSettings.video.enabled === false) {
+          newWorkingHours.online = newWorkingHours.online || {};
+          days.forEach(day => {
+            if (newWorkingHours.online[day]) {
+              newWorkingHours.online[day].active = false;
+              modified = true;
+            }
+          });
+        }
+
+        if (updateData.consultationSettings.physical && updateData.consultationSettings.physical.enabled === false) {
+          newWorkingHours.offline = newWorkingHours.offline || {};
+          days.forEach(day => {
+            if (newWorkingHours.offline[day]) {
+              newWorkingHours.offline[day].active = false;
+              modified = true;
+            }
+          });
+        }
+
+        if (modified) {
+          updateData.workingHours = newWorkingHours;
+        }
+      }
+
       const updatedProfile = await Doctor.findByIdAndUpdate(
         user.profileId,
         updateData,
         {
-          returnDocument: "after",
-          runValidators: true   // Added runValidators
+          new: true,           // Return updated document (Mongoose option)
+          runValidators: true
         },
       );
 
@@ -177,6 +274,36 @@ export class MongoUserRepository extends UserRepository {
 
   }
 
+  async updatePatientProfile(userId, updateData) {
+    try {
+      const user = await SharedUser.findById(userId);
+      if (!user) throw new Error("User not found");
+      if (user.role !== "patient") throw new Error("User is not a patient");
+
+      const updatedProfile = await Patient.findByIdAndUpdate(
+        user.profileId,
+        updateData,
+        {
+          new: true,           // Return updated document (Mongoose option)
+          runValidators: true
+        }
+      );
+
+      user.isProfileCompleted = true; // Always set to true when patient completes this onboarding form
+      await user.save();
+
+      return this._toEntity(user, updatedProfile);
+    } catch (error) {
+      if (error.code === 11000 && error.keyValue) {
+        const duplicateField = Object.keys(error.keyValue)[0];
+        if (duplicateField === 'phone') {
+          throw new Error("The phone number you provided is already linked to another profile.");
+        }
+      }
+      throw error;
+    }
+  }
+
   /**
    * Data Mapper Strategy: Converts DB Documents to explicit Domain Entities
    */
@@ -193,6 +320,8 @@ export class MongoUserRepository extends UserRepository {
       } else {
         computedNameString = profile.name || "";
       }
+    } else {
+      computedNameString = sharedDoc.googleName || (sharedDoc.email?.split("@")[0] || "");
     }
 
     const entity = new User(
@@ -211,7 +340,21 @@ export class MongoUserRepository extends UserRepository {
     entity.isVerified = sharedDoc.isVerified;
     entity.isProfileCompleted = sharedDoc.isProfileCompleted; // Exposes active status parameters up to domain use cases
     entity.verificationStatus = profile?.verificationStatus || "pending"; // Admin approval flag for doctors
+
+    if (roleLower === 'doctor' && profile) {
+      entity.medicalCertificateStatus = profile.medicalCertificateStatus;
+      entity.medicalCertificateRejectionReason = profile.medicalCertificateRejectionReason;
+      entity.governmentIdStatus = profile.governmentIdStatus;
+      entity.governmentIdRejectionReason = profile.governmentIdRejectionReason;
+      entity.qualifications = profile.qualifications || [];
+    }
+
     entity.profileId = profile?._id;
+    if (profile && profile.avatarUrl) {
+      entity.avatarUrl = profile.avatarUrl;
+    } else if (sharedDoc.googleAvatarUrl) {
+      entity.avatarUrl = sharedDoc.googleAvatarUrl;
+    }
     entity.createdAt = sharedDoc.createdAt;
     entity.updatedAt = sharedDoc.updatedAt;
 
@@ -240,6 +383,170 @@ export class MongoUserRepository extends UserRepository {
     return users.map((user) => this._toEntity(user));
   }
 
+  async getAdminDoctors(filters = {}, options = {}) {
+    const { search, status, specialty } = filters;
+    const { sortBy = "newest" } = options;
+
+    const pipeline = [
+      { $match: { role: "doctor" } },
+      {
+        $lookup: {
+          from: "doctors",
+          localField: "profileId",
+          foreignField: "_id",
+          as: "profile"
+        }
+      },
+      {
+        $unwind: {
+          path: "$profile",
+          preserveNullAndEmptyArrays: true
+        }
+      }
+    ];
+
+    const postMatch = {};
+
+    if (search) {
+      const searchRegex = new RegExp(search, "i");
+      postMatch.$or = [
+        { "email": searchRegex },
+        { "profile.firstName": searchRegex },
+        { "profile.lastName": searchRegex },
+        { "profile.specialty": searchRegex }
+      ];
+    }
+
+    if (specialty) {
+      postMatch["profile.specialty"] = specialty;
+    }
+
+    if (status) {
+      if (status === "active") {
+        postMatch["accountStatus"] = "active";
+        postMatch["profile.verificationStatus"] = "approved";
+      } else if (status === "suspended") {
+        postMatch["accountStatus"] = "suspended";
+      } else if (status === "pending") {
+        postMatch["profile.verificationStatus"] = "pending";
+      } else if (status === "rejected") {
+        postMatch["profile.verificationStatus"] = "rejected";
+      }
+    }
+
+    if (Object.keys(postMatch).length > 0) {
+      pipeline.push({ $match: postMatch });
+    }
+
+    pipeline.push({
+      $project: {
+        _id: 1,
+        email: 1,
+        accountStatus: 1,
+        isProfileCompleted: 1,
+        createdAt: 1,
+        name: {
+          $trim: {
+            input: {
+              $concat: [
+                { $ifNull: ["$profile.firstName", ""] },
+                " ",
+                { $ifNull: ["$profile.lastName", ""] }
+              ]
+            }
+          }
+        },
+        specialty: { $ifNull: ["$profile.specialty", "General Practice"] },
+        rating: { $ifNull: ["$profile.rating", 0] },
+        patients: { $ifNull: ["$profile.reviewCount", 0] },
+        verificationStatus: { $ifNull: ["$profile.verificationStatus", "pending"] },
+      }
+    });
+
+    let sortObj = { createdAt: -1 };
+    if (sortBy === "name") sortObj = { name: 1 };
+    else if (sortBy === "rating") sortObj = { rating: -1 };
+    else if (sortBy === "patients") sortObj = { patients: -1 };
+    else if (sortBy === "newest") sortObj = { createdAt: -1 };
+
+    pipeline.push({ $sort: sortObj });
+
+    const page = parseInt(options.page, 10) || 1;
+    const limit = parseInt(options.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+
+    pipeline.push({
+      $facet: {
+        metadata: [{ $count: "total" }],
+        data: [{ $skip: skip }, { $limit: limit }]
+      }
+    });
+
+    const result = await SharedUser.aggregate(pipeline);
+
+    const data = result[0].data.map(u => ({
+      ...u,
+      name: u.name || "Unknown"
+    }));
+    const total = result[0].metadata[0] ? result[0].metadata[0].total : 0;
+
+    return { doctors: data, total };
+  }
+
+  async getAdminDoctorStats() {
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const stats = await SharedUser.aggregate([
+      { $match: { role: "doctor" } },
+      {
+        $lookup: {
+          from: "doctors",
+          localField: "profileId",
+          foreignField: "_id",
+          as: "profile"
+        }
+      },
+      {
+        $unwind: {
+          path: "$profile",
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $facet: {
+          total: [{ $count: "count" }],
+          active: [
+            {
+              $match: {
+                accountStatus: "active",
+                "profile.verificationStatus": "approved"
+              }
+            },
+            { $count: "count" }
+          ],
+          suspended: [
+            { $match: { accountStatus: "suspended" } },
+            { $count: "count" }
+          ],
+          newThisMonth: [
+            { $match: { createdAt: { $gte: startOfMonth } } },
+            { $count: "count" }
+          ]
+        }
+      }
+    ]);
+
+    const result = stats[0] || {};
+    return {
+      total: result.total?.[0]?.count || 0,
+      active: result.active?.[0]?.count || 0,
+      suspended: result.suspended?.[0]?.count || 0,
+      newThisMonth: result.newThisMonth?.[0]?.count || 0
+    };
+  }
+
 
 
   async getApprovedDoctors() {
@@ -257,15 +564,15 @@ export class MongoUserRepository extends UserRepository {
 
     // return approvedUsers.map(user => this._toEntity(user));
     return approvedUsers.map(user => ({
-    id: user._id,
-    name: `${user.profileId.firstName} ${user.profileId.lastName}`,
-    email: user.email,
-    avatarUrl: user.profileId.avatarUrl,
-    specialty: user.profileId.specialty,
-    rating: user.profileId.rating,
-    reviewCount: user.profileId.reviewCount,
-    yearsOfExperience: user.profileId.yearsOfExperience,
-  }));
+      id: user._id,
+      name: `${user.profileId.firstName} ${user.profileId.lastName}`,
+      email: user.email,
+      avatarUrl: user.profileId.avatarUrl,
+      specialty: user.profileId.specialty,
+      rating: user.profileId.rating,
+      reviewCount: user.profileId.reviewCount,
+      yearsOfExperience: user.profileId.yearsOfExperience,
+    }));
   }
 
 
@@ -388,6 +695,51 @@ export class MongoUserRepository extends UserRepository {
     };
   }
 
+  async getAdminDoctorById(id) {
+    const sharedUser = await SharedUser.findById(id).populate("profileId");
+    if (!sharedUser || sharedUser.role !== "doctor") return null;
+
+    const p = sharedUser.profileId || {};
+    return {
+      id: sharedUser._id, // This matches what frontend expects for params.id
+      firstName: p.firstName,
+      lastName: p.lastName,
+      name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || sharedUser.name,
+      email: sharedUser.email,
+      phone: p.phone,
+      specialty: p.specialty,
+      yearsOfExperience: p.yearsOfExperience,
+      bio: p.bio,
+      avatarUrl: p.avatarUrl,
+      expertiseTags: p.expertiseTags,
+      languages: p.languages,
+      qualifications: p.qualifications,
+      consultationSettings: p.consultationSettings,
+      workingHours: p.workingHours,
+      rating: p.rating,
+      reviewCount: p.reviewCount,
+      medicalCertificateUrl: p.medicalCertificateUrl,
+      medicalCertificateStatus: p.medicalCertificateStatus,
+      medicalCertificateRejectionReason: p.medicalCertificateRejectionReason,
+      governmentIdUrl: p.governmentIdUrl,
+      governmentIdStatus: p.governmentIdStatus,
+      governmentIdRejectionReason: p.governmentIdRejectionReason,
+      licenseNumber: p.licenseNumber,
+      verificationStatus: p.verificationStatus,
+      accountStatus: sharedUser.accountStatus || 'active',
+      isProfileCompleted: sharedUser.isProfileCompleted,
+      createdAt: sharedUser.createdAt,
+      gender: p.gender,
+      dob: p.dob,
+      location: p.location,
+      degree: p.qualifications?.length > 0 ? p.qualifications[0].degree : null,
+      medicalCollege: p.qualifications?.length > 0 ? p.qualifications[0].institution : null,
+      registrationNumber: p.licenseNumber,
+      experience: p.yearsOfExperience,
+      hospital: p.clinicName,
+      patients: p.reviewCount || 0
+    };
+  }
 
   async delete(id) {
     const user = await SharedUser.findById(id);

@@ -3,13 +3,15 @@
 export class AuthController {
   constructor(
     signupUser,
-    loginUser, 
+    loginUser,
     adminLoginUser,
     refreshToken,
     logoutUser,
     getUserProfile,
     verifyOtpUseCase,
     resendOtpUseCase,
+    googleLoginUser,
+    setRoleUseCase,
   ) {
     this.signupUser = signupUser;
     this.loginUser = loginUser;
@@ -17,8 +19,10 @@ export class AuthController {
     this.refreshToken = refreshToken;
     this.logoutUser = logoutUser;
     this.getUserProfile = getUserProfile;
-    this.verifyOtpUseCase = verifyOtpUseCase; // <--- Assigned here
-    this.resendOtpUseCase = resendOtpUseCase; // 2. ADD THIS LINE
+    this.verifyOtpUseCase = verifyOtpUseCase;
+    this.resendOtpUseCase = resendOtpUseCase;
+    this.googleLoginUser = googleLoginUser;
+    this.setRoleUseCase = setRoleUseCase;
   }
 
   // ✅ GET CURRENT USER
@@ -45,18 +49,29 @@ export class AuthController {
 
   // ✅ HELPER
   _mapUserResponse(user) {
-    return {
+    const response = {
       _id: user.id || user._id,
       name: user.name,
       email: user.email,
       role: user.role,
       isProfileCompleted: user.isProfileCompleted || false,
-      verificationStatus: user.verificationStatus || 'pending',
+      verificationStatus: user.verificationStatus || "pending",
       isDeleted: user.isDeleted,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       lastLogin: user.lastLogin,
     };
+
+    if (user.role === "doctor") {
+      response.medicalCertificateStatus = user.medicalCertificateStatus;
+      response.medicalCertificateRejectionReason =
+        user.medicalCertificateRejectionReason;
+      response.governmentIdStatus = user.governmentIdStatus;
+      response.governmentIdRejectionReason = user.governmentIdRejectionReason;
+      response.qualifications = user.qualifications;
+    }
+
+    return response;
   }
 
   // ✅ SIGNUP
@@ -174,6 +189,93 @@ export class AuthController {
     }
   }
 
+  // ✅ GOOGLE LOGIN
+  async googleLogin(req, res) {
+    try {
+      const { firebaseToken, role } = req.body;
+      const { user, accessToken, refreshToken } =
+        await this.googleLoginUser.execute({ firebaseToken, role });
+
+      res.cookie("accessToken", accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 2 * 60 * 1000,
+      });
+
+      res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Google Login successful",
+        user: this._mapUserResponse(user),
+        accessToken,
+      });
+    } catch (error) {
+      res.status(401).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  } 
+
+  // ✅ SET ROLE
+  async setRole(req, res) { 
+    console.log("=== SET ROLE ENDPOINT HIT ===");
+    console.log("User:", req.user);
+    console.log("Body:", req.body);
+    try {
+      const userId = req.user?.id || req.user?._id;
+      const { role } = req.body;
+
+      if (!userId) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Unauthorized" });
+      }
+
+      const { user, accessToken, refreshToken } =
+        await this.setRoleUseCase.execute(userId, role);
+
+      // 🔥 Set new access token cookie since role has changed
+      res.cookie("accessToken", accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 2 * 60 * 1000,
+      });
+
+      // 🔥 Set new refresh token cookie
+      res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Role assigned successfully",
+        user: this._mapUserResponse(user),
+      });
+    } catch (error) {
+      console.error("SET ROLE ERROR:", error);
+      res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
   // ✅ ADMIN LOGIN
   async adminLogin(req, res) {
     try {
@@ -237,10 +339,11 @@ export class AuthController {
       res.json({
         success: true,
         user: this._mapUserResponse(user),
+        accessToken, // Required by frontend axios interceptor
       });
     } catch (error) {
       res.status(403).json({
-        success: false,
+        success: false, 
         message: error.message,
       });
     }

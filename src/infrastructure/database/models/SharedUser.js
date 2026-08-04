@@ -13,18 +13,18 @@ const sharedUserSchema = new mongoose.Schema(
     password: { type: String, required: true, select: false },
     role: {
       type: String,
-      enum: ["admin", "doctor", "patient"],
+      enum: ["admin", "doctor", "patient", "unassigned"],
       required: true,
     },
     // This dynamically links to Admin, Doctor, or Patient collections
     profileId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: true,
+      required: function() { return this.role !== 'unassigned'; },
       refPath: "roleModel",
     },
     roleModel: {
       type: String,
-      required: true,
+      required: function() { return this.role !== 'unassigned'; },
       enum: ["Admin", "Doctor", "Patient"],
     },
     otp: {
@@ -32,6 +32,8 @@ const sharedUserSchema = new mongoose.Schema(
       expiresAt: { type: Date },
     },
     isVerified: { type: Boolean, default: false }, // Useful for Signup OTP flow
+    googleName: { type: String },
+    googleAvatarUrl: { type: String },
 
     // profile-update update new lines of code here
     // 🔥 THE GATEKEEPER: Keeps layout guard checks lightning fast
@@ -41,6 +43,12 @@ const sharedUserSchema = new mongoose.Schema(
       default: false,
     },
     // profile-update update new lines of code here
+
+    accountStatus: {
+      type: String,
+      enum: ["active", "suspended"],
+      default: "active",
+    },
 
     refreshToken: { type: String, select: false },
   },

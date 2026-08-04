@@ -13,6 +13,15 @@ export class User {
         this.isVerified = false; // Default
         this.isProfileCompleted = false; // 🔥 Tracks if user completed their onboarding forms
         this.verificationStatus = 'pending'; // 🔥 Tracks if admin approved the doctor ('pending', 'approved', 'rejected')
+        this.avatarUrl = null;
+        
+        // Document statuses for doctors
+        this.medicalCertificateStatus = 'pending';
+        this.medicalCertificateRejectionReason = '';
+        this.governmentIdStatus = 'pending';
+        this.governmentIdRejectionReason = '';
+        this.qualifications = [];
+
         this.otp = { code: null, expiresAt: null };
     }
 

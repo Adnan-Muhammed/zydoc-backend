@@ -58,7 +58,12 @@ router.post('/', (req, res) => adminUserController.createUser(req, res));
 router.put('/:id', (req, res) => adminUserController.updateUser(req, res));
 router.put('/soft-delete/:id', (req, res) => adminUserController.softDeleteUser(req, res));
 router.put('/restore/:id', (req, res) => adminUserController.restoreUser(req, res));
+router.put('/doctors/:id/documents/:docType/status', (req, res) => adminUserController.updateDocumentStatus(req, res));
 router.put('/doctors/:id/approve', (req, res) => adminUserController.approveDoctor(req, res));
+router.put('/doctors/:id/qualifications/:qualId/status', (req, res) => adminUserController.updateQualificationStatus(req, res));
+router.put('/doctors/:id/reject', (req, res) => adminUserController.rejectDoctor(req, res));
+router.put('/doctors/:id/suspend', (req, res) => adminUserController.suspendDoctor(req, res));
+router.put('/doctors/:id/unsuspend', (req, res) => adminUserController.unsuspendDoctor(req, res));
 router.delete('/:id', (req, res) => adminUserController.deleteUser(req, res));
 
 export default router;

@@ -19,6 +19,12 @@ import { seedAdmin } from "./src/infrastructure/database/seeders/AdminSeeder.js"
 import doctorRoutes from "./src/presentation/routes/doctorRoutes.js";
 import adminDoctorRoutes from "./src/presentation/routes/adminDoctorRoutes.js";
 import doctorsPublicRoutes from "./src/presentation/routes/doctorsPublicRoutes.js";
+import patientRoutes from "./src/presentation/routes/patientRoutes.js";
+import appointmentRoutes from "./src/presentation/routes/appointmentRoutes.js";
+
+// Initialize Cron Jobs
+import "./src/infrastructure/cron/SlotCron.js";
+
 // Config
 // dotenv.config();
 const app = express();
@@ -41,13 +47,17 @@ app.use(
 //     credentials: true
 // }));
 
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  }),
-);
+const corsOptions = {
+  origin: process.env.CLIENT_URL || "http://localhost:3000",
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+};
+
+// Handle CORS preflight (OPTIONS) and all requests with the same cors() config
+// This ensures consistent Access-Control-* headers on BOTH preflight and actual requests
+// Note: path-to-regexp v6+ does not support bare "*" — use a regex instead
+app.options(/\/.*/, cors(corsOptions)); // Preflight handler for all routes
+app.use(cors(corsOptions));             // Actual requests
 
 // Debug Middleware
 if (process.env.NODE_ENV === "development") {
@@ -72,9 +82,18 @@ app.use("/api/admin/auth", adminAuthRoutes);  // login for admin
 
 
 
-app.use("/api/admin/doctors", adminDoctorRoutes);
-app.use("/api/doctor/", doctorRoutes);   // doctor  profile completions
 
+
+app.use("/api/admin/doctors", adminDoctorRoutes);
+app.use("/api/doctor/", 
+  ((req, res, next) => { console.log(123456789), next() }),
+   doctorRoutes);   // doctor  profile completions
+
+
+
+   
+app.use("/api/patient/", patientRoutes); // patient profile completions
+app.use("/api/appointments", appointmentRoutes); // appointments flow
 
 
 

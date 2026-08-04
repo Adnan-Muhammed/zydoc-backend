@@ -3,7 +3,10 @@ export class GetDoctorsUseCase {
     this.userRepository = userRepository;
   }
 
-  async execute() {
-    return await this.userRepository.getApprovedDoctors();
+  async execute(filters = {}, options = {}) {
+    if (this.userRepository.getAdminDoctors) {
+      return await this.userRepository.getAdminDoctors(filters, options);
+    }
+    return await this.userRepository.getDoctors();
   }
 }

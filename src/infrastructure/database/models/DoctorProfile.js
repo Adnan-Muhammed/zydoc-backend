@@ -11,7 +11,7 @@
 
 // export default mongoose.model("Doctor", doctorSchema);
 
-// src/infrastructure/database/models/DoctorProfile.js
+// src/infrastructure/database/models/DoctorProfile.js 
 import mongoose from "mongoose";
 
 // Sub-document for clean qualification layout indexing
@@ -21,6 +21,10 @@ const qualificationSchema = new mongoose.Schema(
     degree: { type: String, required: true },
     institution: { type: String, required: true },
     year: { type: Number, required: true },
+    certificateName: { type: String, default: "" },
+    certificateUrl: { type: String, default: "" },
+    certificateStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    rejectionReason: { type: String, default: "" },
   },
   { _id: false },
 );
@@ -39,7 +43,7 @@ const doctorSchema = new mongoose.Schema(
   {
     // Core Display Values
     firstName: { type: String, required: true, trim: true },
-    lastName: { type: String, required: true, trim: true },
+    lastName: { type: String, trim: true, default: "" },
     phone: { 
       type: String, 
       trim: true,
@@ -59,7 +63,11 @@ const doctorSchema = new mongoose.Schema(
     // Media Attachments and Document File Paths (URLs pointing to secure uploads bucket)
     avatarUrl: { type: String, default: "" },
     medicalCertificateUrl: { type: String, default: "" },
+    medicalCertificateStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    medicalCertificateRejectionReason: { type: String, default: "" },
     governmentIdUrl: { type: String, default: "" },
+    governmentIdStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    governmentIdRejectionReason: { type: String, default: "" },
 
     // Compliance Check Processing Hook
     verificationStatus: {
@@ -91,23 +99,32 @@ const doctorSchema = new mongoose.Schema(
 
     // Weekly Operations Time Shift block configuration layout
     workingHours: {
-      mondayToFriday: {
-        type: shiftTimeSchema,
-        default: () => ({ active: true, start: "09:00", end: "17:00" }),
+      online: {
+        mondayToFriday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        monday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        tuesday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        wednesday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        thursday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        friday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        saturday: { type: shiftTimeSchema, default: () => ({ active: false, start: "10:00", end: "14:00" }) },
+        sunday: { type: shiftTimeSchema, default: () => ({ active: false, start: "00:00", end: "00:00" }) },
       },
-      saturday: {
-        type: shiftTimeSchema,
-        default: () => ({ active: true, start: "10:00", end: "14:00" }),
-      },
-      sunday: {
-        type: shiftTimeSchema,
-        default: () => ({ active: false, start: "00:00", end: "00:00" }),
-      },
+      offline: {
+        mondayToFriday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        monday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        tuesday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        wednesday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        thursday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        friday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
+        saturday: { type: shiftTimeSchema, default: () => ({ active: false, start: "10:00", end: "14:00" }) },
+        sunday: { type: shiftTimeSchema, default: () => ({ active: false, start: "00:00", end: "00:00" }) },
+      }
     },
 
     // Aggregated reviews summary calculations cache
     rating: { type: Number, default: 5.0 },
     reviewCount: { type: Number, default: 0 },
+    fcmToken: { type: String },
   },
   { timestamps: true },
 );
