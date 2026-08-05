@@ -12,7 +12,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
         });
 
         if (existing) {
-            return null;
+            return null; 
         }
 
         const appointment = new Appointment({
@@ -50,5 +50,17 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             status: 'locked',
             lockExpiryTime: { $lt: currentTime }
         });
+    }
+
+    async findById(id) {
+        return await Appointment.findById(id);
+    }
+
+    async findByOrderId(orderId) {
+        return await Appointment.findOne({ razorpayOrderId: orderId });
+    }
+
+    async update(id, data) {
+        return await Appointment.findByIdAndUpdate(id, data, { new: true });
     }
 }

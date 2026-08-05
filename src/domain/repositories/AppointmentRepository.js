@@ -3,3 +3,4 @@ export class AppointmentRepository {
     async unlockSlot(appointmentId, userId) { throw new Error('Method not implemented'); }
     async findExpiredLocks(currentTime) { throw new Error('Method not implemented'); }
 }
+ 

@@ -13,7 +13,7 @@ cron.schedule('* * * * *', async () => {
             await appointmentRepo.unlockSlot(appointment._id, appointment.lockedBy);
             console.log(`Unlocked expired appointment slot: ${appointment._id}`);
         }
-    } catch (error) {
+    } catch (error) { 
         console.error("Error in SlotCron:", error);
     }
 });

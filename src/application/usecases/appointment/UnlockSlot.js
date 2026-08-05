@@ -17,3 +17,4 @@ export class UnlockSlot {
         return unlockedAppointment;
     }
 }
+ 

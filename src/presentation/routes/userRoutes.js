@@ -9,7 +9,7 @@ import { JwtService } from '../../infrastructure/security/JwtService.js';
 import { BcryptService } from '../../infrastructure/security/BcryptService.js';
 import { UserController } from '../controllers/UserController.js';
 
-// Use Cases
+// Use Cases 
 import { GetUserProfile } from '../../application/usecases/user/GetUserProfile.js';
 import { UpdateUserProfile } from '../../application/usecases/user/UpdateUserProfile.js';
 

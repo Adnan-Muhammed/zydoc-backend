@@ -308,8 +308,12 @@ export const lockAppointmentSlot = async (req, res) => {
 
         res.status(200).json({ 
             success: true, 
-            message: "Slot locked successfully", 
+            message: "Slot locked successfully",
+            id: lockedAppointment._id,
+            appointmentId: lockedAppointment._id,
             data: {
+                id: lockedAppointment._id,
+                appointmentId: lockedAppointment._id,
                 doctorId: lockedAppointment.doctorId,
                 date: new Date(lockedAppointment.appointmentDate).toISOString().split('T')[0],
                 time: lockedAppointment.appointmentTime,

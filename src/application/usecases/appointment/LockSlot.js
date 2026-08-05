@@ -21,4 +21,4 @@ export class LockSlot {
 
         return lockedAppointment;
     }
-}
+} 
