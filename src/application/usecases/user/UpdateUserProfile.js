@@ -13,7 +13,7 @@ export class UpdateUserProfile {
             throw new Error('Your account has been deactivated');
         }
 
-        // Update name
+        // Update name 
         if (name) {
             if (name.trim().length < 2) {
                 throw new Error('Name must be at least 2 characters long');

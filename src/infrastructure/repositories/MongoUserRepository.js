@@ -10,7 +10,7 @@ import Admin from "../database/models/AdminProfile.js";
 
 export class MongoUserRepository extends UserRepository {
   _getModel(role) {
-    const models = {
+    const models = { 
       doctor: Doctor,
       patient: Patient,
       admin: Admin,
@@ -738,6 +738,196 @@ export class MongoUserRepository extends UserRepository {
       experience: p.yearsOfExperience,
       hospital: p.clinicName,
       patients: p.reviewCount || 0
+    };
+  }
+
+  async getAdminPatients(filters = {}, options = {}) {
+    const { search, status, gender } = filters;
+    const { sortBy = "newest" } = options;
+
+    const pipeline = [
+      { $match: { role: "patient" } },
+      {
+        $lookup: {
+          from: "patients",
+          localField: "profileId",
+          foreignField: "_id",
+          as: "profile"
+        }
+      },
+      {
+        $unwind: {
+          path: "$profile",
+          preserveNullAndEmptyArrays: true
+        }
+      }
+    ];
+
+    const postMatch = {};
+
+    if (search) {
+      const searchRegex = new RegExp(search, "i");
+      postMatch.$or = [
+        { "email": searchRegex },
+        { "profile.firstName": searchRegex },
+        { "profile.lastName": searchRegex },
+        { "profile.phone": searchRegex }
+      ];
+    }
+
+    if (gender) {
+      postMatch["profile.gender"] = gender;
+    }
+
+    if (status) {
+      if (status === "active") {
+        postMatch["accountStatus"] = "active";
+      } else if (status === "suspended") {
+        postMatch["accountStatus"] = "suspended";
+      } else if (status === "inactive") {
+        postMatch["accountStatus"] = "inactive";
+      }
+    }
+
+    if (Object.keys(postMatch).length > 0) {
+      pipeline.push({ $match: postMatch });
+    }
+
+    pipeline.push({
+      $project: {
+        _id: 1,
+        email: 1,
+        accountStatus: 1,
+        isProfileCompleted: 1,
+        createdAt: 1,
+        name: {
+          $trim: {
+            input: {
+              $concat: [
+                { $ifNull: ["$profile.firstName", ""] },
+                " ",
+                { $ifNull: ["$profile.lastName", ""] }
+              ]
+            }
+          }
+        },
+        phone: { $ifNull: ["$profile.phone", ""] },
+        gender: { $ifNull: ["$profile.gender", ""] },
+        age: {
+          $cond: {
+            if: { $ifNull: ["$profile.dateOfBirth", false] },
+            then: {
+              $floor: {
+                $divide: [
+                  { $subtract: [new Date(), "$profile.dateOfBirth"] },
+                  31557600000 // ms in a year
+                ]
+              }
+            },
+            else: 0
+          }
+        },
+        bloodGroup: { $ifNull: ["$profile.bloodGroup", ""] },
+        avatarUrl: { $ifNull: ["$profile.avatarUrl", ""] }
+      }
+    });
+
+    let sortObj = { createdAt: -1 };
+    if (sortBy === "name") sortObj = { name: 1 };
+    else if (sortBy === "newest") sortObj = { createdAt: -1 };
+
+    pipeline.push({ $sort: sortObj });
+
+    const page = parseInt(options.page, 10) || 1;
+    const limit = parseInt(options.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+
+    pipeline.push({
+      $facet: {
+        metadata: [{ $count: "total" }],
+        data: [{ $skip: skip }, { $limit: limit }]
+      }
+    });
+
+    const result = await SharedUser.aggregate(pipeline);
+
+    const data = result[0].data.map(u => ({
+      ...u,
+      name: u.name || "Unknown"
+    }));
+    const total = result[0].metadata[0] ? result[0].metadata[0].total : 0;
+
+    return { patients: data, total };
+  }
+
+  async getAdminPatientStats() {
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const stats = await SharedUser.aggregate([
+      { $match: { role: "patient" } },
+      {
+        $facet: {
+          total: [{ $count: "count" }],
+          active: [
+            { $match: { accountStatus: "active" } },
+            { $count: "count" }
+          ],
+          suspended: [
+            { $match: { accountStatus: "suspended" } },
+            { $count: "count" }
+          ],
+          newThisMonth: [
+            { $match: { createdAt: { $gte: startOfMonth } } },
+            { $count: "count" }
+          ]
+        }
+      }
+    ]);
+
+    const result = stats[0] || {};
+    return {
+      total: result.total?.[0]?.count || 0,
+      active: result.active?.[0]?.count || 0,
+      suspended: result.suspended?.[0]?.count || 0,
+      newThisMonth: result.newThisMonth?.[0]?.count || 0
+    };
+  }
+
+  async getAdminPatientById(id) {
+    const sharedUser = await SharedUser.findById(id).populate("profileId");
+    if (!sharedUser || sharedUser.role !== "patient") return null;
+
+    const p = sharedUser.profileId || {};
+    
+    let age = 0;
+    if (p.dateOfBirth) {
+        const diff = new Date().getTime() - new Date(p.dateOfBirth).getTime();
+        age = Math.floor(diff / 31557600000);
+    }
+
+    return {
+      id: sharedUser._id,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || sharedUser.name,
+      email: sharedUser.email,
+      phone: p.phone,
+      dateOfBirth: p.dateOfBirth,
+      age: age,
+      gender: p.gender,
+      bloodGroup: p.bloodGroup,
+      avatarUrl: p.avatarUrl,
+      accountStatus: sharedUser.accountStatus || 'active',
+      isProfileCompleted: sharedUser.isProfileCompleted,
+      createdAt: sharedUser.createdAt,
+      
+      emergencyContact: p.emergencyContact || {},
+      address: p.address || {},
+      medicalHistory: p.medicalHistory || { allergies: [], chronicConditions: [], currentMedications: [] },
+      
+      appts: 0, // Placeholder, can be populated properly if an Appointment repository is queried
     };
   }
 

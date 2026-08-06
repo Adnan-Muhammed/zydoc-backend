@@ -9,7 +9,7 @@ const adminSchema = new mongoose.Schema(
     },
     permissions: {
       type: [String],
-      enum: [
+      enum: [ 
         "manage_users",
         "manage_doctors",
         "view_reports",

@@ -1,7 +1,8 @@
 import express from "express";
-import { createAppointment, getPatientAppointments, getAvailableSlots, getDoctorAppointments, lockAppointmentSlot, unlockAppointmentSlot } from "../controllers/AppointmentController.js";
+import { createAppointment, getPatientAppointments, getAvailableSlots, getDoctorAppointments, lockAppointmentSlot, unlockAppointmentSlot, getAllAppointmentsAdmin } from "../controllers/AppointmentController.js";
 import { createRazorpayOrder, verifyPayment } from "../controllers/PaymentController.js";
 import { protect } from "../middleware/authMiddleware.js";
+import { adminOnly } from "../middleware/adminMiddleware.js";
 
 const router = express.Router();
 
@@ -11,6 +12,7 @@ router.post("/unlock", protect, unlockAppointmentSlot);
 router.get("/patient", protect, getPatientAppointments);
 router.get("/doctor", protect, getDoctorAppointments);
 router.get("/availability/:doctorId", getAvailableSlots); 
+router.get("/admin/all", protect, adminOnly, getAllAppointmentsAdmin);
 
 // Payment Routes
 router.post("/create-razorpay-order", protect, createRazorpayOrder);

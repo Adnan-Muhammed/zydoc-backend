@@ -29,6 +29,17 @@
 *   **Controllers & Routes:** 
     * Create `PaymentController.js` and corresponding routes for order generation and webhook listening.
 
+### Day 2.5: Data Cleanup, Commission Logic & Fetch APIs
+*   **Transient State Cleanup (Database Efficiency):**
+    * Update the `Appointment` model to use a TTL Index OR update `UnlockSlot.js` and `SlotCron.js` to permanently `delete` temporary `Locked` documents that fail to complete payment within 5 minutes, keeping the database clean.
+*   **Commission & Escrow Logic:**
+    * Inside `VerifyPayment` or a new transaction use case, dynamically calculate the commission split based on `consultationType` (e.g., 20% for Online, 10% for Offline).
+    * Generate a `Transaction` record with `adminCommission`, `doctorAmount`, and `payoutStatus: Pending`.
+*   **List Fetching APIs (Controllers & Routes):**
+    * Create `GET /api/appointments/patient`: Fetch appointments matching the current patient's ID.
+    * Create `GET /api/appointments/doctor`: Fetch upcoming consultations for the current doctor.
+    * Create `GET /api/appointments/admin`: Fetch a master list of all system appointments and their associated transaction data.
+
 ### Day 3: Real-time Notifications & Emails
 *   **Use Cases (`src/application/usecases/notifications`):**
     * Create `UpdateFCMToken.js` (to save the token received from frontend).

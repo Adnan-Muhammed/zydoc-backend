@@ -18,6 +18,7 @@ import adminRoutes from "./src/presentation/routes/adminRoutes.js";
 import { seedAdmin } from "./src/infrastructure/database/seeders/AdminSeeder.js";
 import doctorRoutes from "./src/presentation/routes/doctorRoutes.js";
 import adminDoctorRoutes from "./src/presentation/routes/adminDoctorRoutes.js";
+import adminPatientRoutes from "./src/presentation/routes/adminPatientRoutes.js";
 import doctorsPublicRoutes from "./src/presentation/routes/doctorsPublicRoutes.js";
 import patientRoutes from "./src/presentation/routes/patientRoutes.js";
 import appointmentRoutes from "./src/presentation/routes/appointmentRoutes.js";
@@ -71,7 +72,7 @@ if (process.env.NODE_ENV === "development") {
 
 // Connect to Database
 connectDB().then(() => {
-  seedAdmin();
+  seedAdmin(); 
 });
 
 app.use("/uploads", express.static("uploads"));
@@ -85,6 +86,7 @@ app.use("/api/admin/auth", adminAuthRoutes);  // login for admin
 
 
 app.use("/api/admin/doctors", adminDoctorRoutes);
+app.use("/api/admin/patients", adminPatientRoutes);
 app.use("/api/doctor/", 
   ((req, res, next) => { console.log(123456789), next() }),
    doctorRoutes);   // doctor  profile completions

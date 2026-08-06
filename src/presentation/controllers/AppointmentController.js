@@ -2,11 +2,17 @@ import Appointment from "../../infrastructure/database/models/Appointment.js";
 import Doctor from "../../infrastructure/database/models/DoctorProfile.js";
 import { LockSlot } from "../../application/usecases/appointment/LockSlot.js";
 import { UnlockSlot } from "../../application/usecases/appointment/UnlockSlot.js";
+import { GetPatientAppointments } from "../../application/usecases/appointment/GetPatientAppointments.js";
+import { GetDoctorAppointments } from "../../application/usecases/appointment/GetDoctorAppointments.js";
+import { GetAllAppointmentsAdmin } from "../../application/usecases/appointment/GetAllAppointmentsAdmin.js";
 import { MongoAppointmentRepository } from "../../infrastructure/repositories/MongoAppointmentRepository.js";
 
 const appointmentRepo = new MongoAppointmentRepository();
 const lockSlotUseCase = new LockSlot(appointmentRepo);
 const unlockSlotUseCase = new UnlockSlot(appointmentRepo);
+const getPatientAppointmentsUseCase = new GetPatientAppointments(appointmentRepo);
+const getDoctorAppointmentsUseCase = new GetDoctorAppointments(appointmentRepo);
+const getAllAppointmentsAdminUseCase = new GetAllAppointmentsAdmin(appointmentRepo);
 
 // Create a new appointment
 export const createAppointment = async (req, res) => {
@@ -50,9 +56,7 @@ export const getPatientAppointments = async (req, res) => {
             return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
         }
 
-        const appointments = await Appointment.find({ patientId })
-            .populate('doctorId', 'firstName lastName avatarUrl specialty')
-            .sort({ appointmentDate: -1 });
+        const appointments = await getPatientAppointmentsUseCase.execute(patientId);
 
         res.status(200).json({ success: true, appointments });
     } catch (error) {
@@ -61,18 +65,25 @@ export const getPatientAppointments = async (req, res) => {
     }
 };
 
+import SharedUser from "../../infrastructure/database/models/SharedUser.js";
+
 // Get appointments for a specific doctor
 export const getDoctorAppointments = async (req, res) => {
     try {
-        const doctorId = req.user.id || req.user._id;
+        const userId = req.user.id || req.user._id;
         
-        if (!doctorId) {
+        if (!userId) {
             return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
         }
 
-        const appointments = await Appointment.find({ doctorId })
-            .populate('patientId', 'name avatarUrl email')
-            .sort({ appointmentDate: 1, appointmentTime: 1 });
+        const sharedUser = await SharedUser.findById(userId);
+        if (!sharedUser || !sharedUser.profileId) {
+             return res.status(404).json({ success: false, message: "Doctor profile not found." });
+        }
+        
+        const doctorId = sharedUser.profileId;
+
+        const appointments = await getDoctorAppointmentsUseCase.execute(doctorId);
 
         res.status(200).json({ success: true, appointments });
     } catch (error) {
@@ -80,6 +91,7 @@ export const getDoctorAppointments = async (req, res) => {
         res.status(500).json({ success: false, message: "Server error", error: error.message });
     }
 };
+
 
 export const getAvailableSlots = async (req, res) => {
     try {
@@ -279,7 +291,7 @@ export const getAvailableSlots = async (req, res) => {
 export const lockAppointmentSlot = async (req, res) => {
     try {
         const patientId = req.user.id || req.user._id;
-        const { doctorId, date, time, consultationType } = req.body;
+        const { doctorId, date, time, consultationType, notes } = req.body;
 
         if (!patientId) {
             return res.status(401).json({ success: false, message: "Unauthorized." });
@@ -301,7 +313,8 @@ export const lockAppointmentSlot = async (req, res) => {
             appointmentDate: date,
             appointmentTime: time,
             consultationType,
-            fee
+            fee,
+            notes
         };
 
         const lockedAppointment = await lockSlotUseCase.execute(lockData);
@@ -349,6 +362,16 @@ export const unlockAppointmentSlot = async (req, res) => {
     } catch (error) {
         console.error("Unlock Slot Error:", error);
         res.status(400).json({ success: false, message: error.message });
+    }
+};
+
+export const getAllAppointmentsAdmin = async (req, res) => {
+    try {
+        const appointments = await getAllAppointmentsAdminUseCase.execute();
+        res.status(200).json({ success: true, appointments });
+    } catch (error) {
+        console.error("Get All Appointments Admin Error:", error);
+        res.status(500).json({ success: false, message: "Server error", error: error.message });
     }
 };
 
