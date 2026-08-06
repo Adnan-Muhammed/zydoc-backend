@@ -6,6 +6,8 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import morgan from "morgan";
 import helmet from "helmet";
+import http from "http";
+import { socketService } from "./src/infrastructure/services/SocketService.js";
 
 // Database
 import connectDB from "./src/infrastructure/database/connection.js";
@@ -140,6 +142,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+
+// Initialize Socket.io
+socketService.init(server);
+
+server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });

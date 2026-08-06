@@ -51,6 +51,7 @@ export class AuthController {
   _mapUserResponse(user) {
     const response = {
       _id: user.id || user._id,
+      profileId: user.profileId,
       name: user.name,
       email: user.email,
       role: user.role,

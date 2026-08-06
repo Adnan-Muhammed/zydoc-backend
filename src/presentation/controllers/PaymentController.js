@@ -4,12 +4,13 @@ import PaymentService from "../../infrastructure/services/PaymentService.js";
 import { MongoAppointmentRepository } from "../../infrastructure/repositories/MongoAppointmentRepository.js";
 import { MongoTransactionRepository } from "../../infrastructure/repositories/MongoTransactionRepository.js";
 import { MailService } from "../../infrastructure/security/MailService.js";
+import { socketService } from "../../infrastructure/services/SocketService.js";
 
 const appointmentRepo = new MongoAppointmentRepository();
 const transactionRepo = new MongoTransactionRepository();
 const mailService = new MailService();
 const createPaymentOrderUseCase = new CreatePaymentOrder(PaymentService, appointmentRepo);
-const verifyPaymentUseCase = new VerifyPayment(PaymentService, appointmentRepo, transactionRepo, mailService);
+const verifyPaymentUseCase = new VerifyPayment(PaymentService, appointmentRepo, transactionRepo, mailService, socketService);
 
 export const createRazorpayOrder = async (req, res) => {
   try {

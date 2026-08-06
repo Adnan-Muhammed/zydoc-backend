@@ -1,9 +1,10 @@
 export class VerifyPayment {
-  constructor(paymentService, appointmentRepository, transactionRepository, mailService) {
+  constructor(paymentService, appointmentRepository, transactionRepository, mailService, socketService) {
     this.paymentService = paymentService;
     this.appointmentRepository = appointmentRepository;
     this.transactionRepository = transactionRepository;
     this.mailService = mailService;
+    this.socketService = socketService;
   }
 
   async execute(razorpay_order_id, razorpay_payment_id, razorpay_signature) {
@@ -65,6 +66,18 @@ export class VerifyPayment {
         .catch(error => console.error("[VerifyPayment] Error triggering booking confirmation email:", error));
     } else {
       console.log("[VerifyPayment] mailService or sendBookingConfirmation method is NOT available on this instance:", this.mailService);
+    }
+
+    // Trigger real-time booking notification
+    if (this.socketService && typeof this.socketService.emitNewBookingNotification === 'function') {
+      console.log("[VerifyPayment] socketService is available, emitting new booking notification...");
+      try {
+        this.socketService.emitNewBookingNotification(appointment.doctorId, appointment);
+      } catch (error) {
+        console.error("[VerifyPayment] Error emitting new booking notification:", error);
+      }
+    } else {
+      console.log("[VerifyPayment] socketService or emitNewBookingNotification method is NOT available on this instance.");
     }
 
     return { success: true, appointment };
