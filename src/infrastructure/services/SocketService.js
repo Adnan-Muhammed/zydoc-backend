@@ -75,6 +75,31 @@ class SocketService {
     this.io.to("admin_room").emit("new_booking", payload);
     console.log(`[SocketService] Emitted new_booking to admin_room`);
   }
+
+  emitToUser(userId, event, payload) {
+    if (!this.io) {
+      console.error("[SocketService] Socket.io is not initialized!");
+      return;
+    }
+    
+    // Convert userId to string to ensure it matches the map key
+    const socketId = this.users.get(userId.toString());
+    if (socketId) {
+      this.io.to(socketId).emit(event, payload);
+      console.log(`[SocketService] Emitted ${event} to User ${userId}`);
+    } else {
+      console.log(`[SocketService] User ${userId} is not online. Event ${event} skipped.`);
+    }
+  }
+
+  emitToRoom(room, event, payload) {
+    if (!this.io) {
+      console.error("[SocketService] Socket.io is not initialized!");
+      return;
+    }
+    this.io.to(room).emit(event, payload);
+    console.log(`[SocketService] Emitted ${event} to Room ${room}`);
+  }
 }
 
 // Export a singleton instance

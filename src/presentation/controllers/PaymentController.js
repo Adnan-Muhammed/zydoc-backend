@@ -5,12 +5,18 @@ import { MongoAppointmentRepository } from "../../infrastructure/repositories/Mo
 import { MongoTransactionRepository } from "../../infrastructure/repositories/MongoTransactionRepository.js";
 import { MailService } from "../../infrastructure/security/MailService.js";
 import { socketService } from "../../infrastructure/services/SocketService.js";
+import MongoNotificationRepository from "../../infrastructure/repositories/MongoNotificationRepository.js";
+import CreateNotification from "../../application/usecases/notification/CreateNotification.js";
+import Admin from "../../infrastructure/database/models/AdminProfile.js";
 
 const appointmentRepo = new MongoAppointmentRepository();
 const transactionRepo = new MongoTransactionRepository();
 const mailService = new MailService();
 const createPaymentOrderUseCase = new CreatePaymentOrder(PaymentService, appointmentRepo);
 const verifyPaymentUseCase = new VerifyPayment(PaymentService, appointmentRepo, transactionRepo, mailService, socketService);
+
+const notificationRepo = new MongoNotificationRepository();
+const createNotificationUseCase = new CreateNotification(notificationRepo, socketService);
 
 export const createRazorpayOrder = async (req, res) => {
   try {
@@ -49,6 +55,37 @@ export const verifyPayment = async (req, res) => {
       razorpay_payment_id,
       razorpay_signature
     );
+
+    if (verificationResult.success) {
+      const appointment = verificationResult.appointment;
+      
+      // Create DB notification for Doctor (will also emit 'new_notification' via socket)
+      await createNotificationUseCase.execute({
+        recipientId: appointment.doctorId,
+        recipientModel: 'Doctor',
+        type: 'BOOKING',
+        title: 'New Appointment Booked',
+        message: 'A patient has booked a new appointment with you.',
+        referenceId: appointment._id
+      });
+      
+      // Fetch the primary admin and create a DB notification for them
+      try {
+        const admin = await Admin.findOne();
+        if (admin) {
+          await createNotificationUseCase.execute({
+            recipientId: admin._id,
+            recipientModel: 'Admin',
+            type: 'BOOKING',
+            title: 'New Appointment Booked',
+            message: `A new appointment has been booked for Doctor ${appointment.doctorId}.`,
+            referenceId: appointment._id
+          });
+        }
+      } catch (adminError) {
+        console.error("Error sending admin notification:", adminError);
+      }
+    }
 
     return res.status(200).json({
       success: true,
