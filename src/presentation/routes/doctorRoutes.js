@@ -8,6 +8,7 @@ import { MongoUserRepository } from "../../infrastructure/repositories/MongoUser
 import { UpdateDoctorProfile } from "../../application/usecases/doctor/UpdateDoctorProfile.js";
 import { PatchDoctorProfile } from "../../application/usecases/doctor/PatchDoctorProfile.js";
 import { GetDoctorProfile } from "../../application/usecases/doctor/GetDoctorProfile.js";
+import { UpdateFcmToken } from "../../application/usecases/doctor/UpdateFcmToken.js";
 
 import { DoctorController } from "../controllers/DoctorController.js";
 import { JwtService } from '../../infrastructure/security/JwtService.js';
@@ -20,12 +21,15 @@ const updateDoctorProfileUseCase = new UpdateDoctorProfile(userRepository);
 const patchDoctorProfileUseCase = new PatchDoctorProfile(userRepository);
 const getDoctorProfileUseCase = new GetDoctorProfile(userRepository);
 
+const updateFcmTokenUseCase = new UpdateFcmToken();
+
 const doctorController = new DoctorController(
   updateDoctorProfileUseCase,
   jwtService,
   patchDoctorProfileUseCase,
   null, // uploadDoctorDocuments (not implemented yet)
-  getDoctorProfileUseCase
+  getDoctorProfileUseCase,
+  updateFcmTokenUseCase
 );
 
 router.post(
@@ -48,5 +52,10 @@ router.put("/profile/qualifications", protect, upload.any(), (req, res) => docto
 router.patch("/profile/preferences", protect, (req, res) => doctorController.updatePreferences(req, res));
 router.patch("/profile/schedule", protect, (req, res) => doctorController.updateSchedule(req, res));
 router.post("/profile/certificates", protect, upload.array("certificates", 10), (req, res) => doctorController.uploadCertificates(req, res));
+
+// FCM Token Registration
+// Called automatically by the frontend after notification permission is granted.
+// Stores the device's FCM token on the doctor's profile for targeted push notifications.
+router.patch("/fcm-token", protect, (req, res) => doctorController.saveFcmToken(req, res));
 
 export default router;  

@@ -6,6 +6,8 @@ import { GetPatientAppointments } from "../../application/usecases/appointment/G
 import { GetDoctorAppointments } from "../../application/usecases/appointment/GetDoctorAppointments.js";
 import { GetAllAppointmentsAdmin } from "../../application/usecases/appointment/GetAllAppointmentsAdmin.js";
 import { MongoAppointmentRepository } from "../../infrastructure/repositories/MongoAppointmentRepository.js";
+import { fcmService } from "../../infrastructure/services/FcmService.js";
+import { socketService } from "../../infrastructure/services/SocketService.js";
 
 const appointmentRepo = new MongoAppointmentRepository();
 const lockSlotUseCase = new LockSlot(appointmentRepo);
@@ -14,44 +16,130 @@ const getPatientAppointmentsUseCase = new GetPatientAppointments(appointmentRepo
 const getDoctorAppointmentsUseCase = new GetDoctorAppointments(appointmentRepo);
 const getAllAppointmentsAdminUseCase = new GetAllAppointmentsAdmin(appointmentRepo);
 
-// Create a new appointment
-export const createAppointment = async (req, res) => {
-    try {
-        const { doctorId, appointmentDate, appointmentTime, consultationType, fee, notes } = req.body;
-        // The authentication middleware should populate req.user
-        const patientId = req.user.id || req.user._id; 
+// //Create a new appointment
+// export const createAppointment = async (req, res) => {
 
-        if (!patientId) {
-            return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
-        }
+//     console.log(8888888);
 
-        if (!doctorId || !appointmentDate || !appointmentTime || !consultationType || fee === undefined) {
-            return res.status(400).json({ success: false, message: "Missing required fields" });
-        }
+//     try {
+//         const { doctorId, appointmentDate, appointmentTime, consultationType, fee, notes } = req.body;
+//         // The authentication middleware should populate req.user
+//         const patientId = req.user.id || req.user._id;
 
-        const newAppointment = new Appointment({
-            patientId,
-            doctorId,
-            appointmentDate,
-            appointmentTime,
-            consultationType,
-            fee,
-            notes
-        });
+//         if (!patientId) {
+//             return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
+//         }
 
-        await newAppointment.save();
-        res.status(201).json({ success: true, message: "Appointment booked successfully", appointment: newAppointment });
-    } catch (error) {
-        console.error("Create Appointment Error:", error);
-        res.status(500).json({ success: false, message: "Server error", error: error.message });
-    }
-};
+//         if (!doctorId || !appointmentDate || !appointmentTime || !consultationType || fee === undefined) {
+//             return res.status(400).json({ success: false, message: "Missing required fields" });
+//         }
+
+//         const newAppointment = new Appointment({
+//             patientId,
+//             doctorId,
+//             appointmentDate,
+//             appointmentTime,
+//             consultationType,
+//             fee,
+//             notes
+//         });
+
+//         await newAppointment.save();
+
+//         // ─── Notification Routing: Socket.io (Online) vs FCM (OfflineFallback) ──
+//         // Fire-and-forget: failure NEVER affects the booking response
+//         try {
+//             // Find the SharedUser account for this doctor to check connection status
+//             // The SocketService registry uses SharedUser._id as the key
+//             const doctorSharedUser = await SharedUser.findOne({
+//                 profileId: doctorId,
+//                 role: 'doctor'
+//             }).select('_id');
+
+//             // Format the notification payload
+//             const patientUser = await SharedUser.findById(patientId).populate("profileId").select("profileId");
+//             const patientFirstName = patientUser?.profileId?.firstName || "A patient";
+
+//             const formattedDate = new Date(appointmentDate).toLocaleDateString("en-IN", {
+//                 day: "numeric", month: "short", year: "numeric",
+//             });
+
+//             const notificationTitle = "📅 New Appointment Booked!";
+//             const notificationBody = `${patientFirstName} booked a ${consultationType} consultation on ${formattedDate} at ${appointmentTime}.`;
+//             const notificationLink = "/doctor/appointments";
+
+
+//             if (doctorSharedUser && socketService.isUserOnline(doctorId)) {
+//                 // DOCTOR IS ONLINE -> Send via Socket.io
+
+//                 socketService.emitToUser(doctorId, "new_notification", {
+//                     title: notificationTitle,
+//                     message: notificationBody,
+//                     link: notificationLink,
+//                     type: "new_appointment",
+//                     appointmentId: String(newAppointment._id),
+//                     timestamp: new Date().toISOString()
+//                 });
+
+
+//                 console.log(111111);
+
+
+
+
+//             } else {
+
+
+//                 console.log(222222222);
+//                 console.log(222222222);
+//                 console.log(222222222);
+//                 console.log(222222222);
+
+//                 // DOCTOR IS OFFLINE -> Fallback to FCM Push Notification
+//                 console.log(`[AppointmentController] Doctor ${doctorId} is OFFLINE. Falling back to FCM push notification.`);
+//                 fs.appendFileSync('fcm_debug.log', `[${new Date().toISOString()}] OFFLINE -> FCM Push\n`);
+//                 const doctorProfile = await Doctor.findById(doctorId).select("fcmToken");
+
+//                 if (doctorProfile?.fcmToken) {
+//                     await fcmService.sendToDevice(
+//                         doctorProfile.fcmToken,
+//                         {
+//                             title: notificationTitle,
+//                             body: notificationBody,
+//                         },
+//                         {
+//                             appointmentId: String(newAppointment._id),
+//                             type: "new_appointment",
+//                             link: notificationLink,
+//                         }
+//                     );
+//                 } else {
+
+//                     console.log(33333333333);
+
+//                     console.log(`[AppointmentController] Doctor ${doctorId} is offline and has no FCM token. Notification skipped.`);
+//                 }
+//             }
+//         } catch (notifError) {
+//             // Log but never fail the booking because of a notification error
+//             console.error("[AppointmentController] Notification routing failed (non-critical):", notifError.message);
+//         }
+//         // ────────────────────────────────────────────────────────────────────────
+
+//         res.status(201).json({ success: true, message: "Appointment booked successfully", appointment: newAppointment });
+//     } catch (error) {
+//         console.error("Create Appointment Error:", error);
+//         res.status(500).json({ success: false, message: "Server error", error: error.message });
+//     }
+// };
+
+
 
 // Get appointments for a specific patient
 export const getPatientAppointments = async (req, res) => {
     try {
         const patientId = req.user.id || req.user._id;
-        
+
         if (!patientId) {
             return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
         }
@@ -71,16 +159,16 @@ import SharedUser from "../../infrastructure/database/models/SharedUser.js";
 export const getDoctorAppointments = async (req, res) => {
     try {
         const userId = req.user.id || req.user._id;
-        
+
         if (!userId) {
             return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
         }
 
         const sharedUser = await SharedUser.findById(userId);
         if (!sharedUser || !sharedUser.profileId) {
-             return res.status(404).json({ success: false, message: "Doctor profile not found." });
+            return res.status(404).json({ success: false, message: "Doctor profile not found." });
         }
-        
+
         const doctorId = sharedUser.profileId;
 
         const appointments = await getDoctorAppointmentsUseCase.execute(doctorId);
@@ -134,7 +222,7 @@ export const getAvailableSlots = async (req, res) => {
          * Flat-format doctors like "ramees ali" have their schedule stored directly
          * on workingHours without the online/offline nesting added later in the schema.
          */
-        const DAY_KEYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday','mondayToFriday'];
+        const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'mondayToFriday'];
         const rawWH = doctor.workingHours || {};
 
         function resolveWorkingHours(consultationType) {
@@ -193,7 +281,7 @@ export const getAvailableSlots = async (req, res) => {
 
         // ── 2. Generate 30-min slot strings ──────────────────────────────────
         const start = daySchedule.start || "09:00";
-        const end   = daySchedule.end   || "17:00";
+        const end = daySchedule.end || "17:00";
 
         const slots = [];
         const SLOT_DURATION = 30;
@@ -202,7 +290,7 @@ export const getAvailableSlots = async (req, res) => {
 
         let [currentHour, currentMin] = start.split(':').map(Number);
         const [endHour, endMin] = end.split(':').map(Number);
-        
+
         let currentTimeInMins = currentHour * 60 + currentMin;
         const endTimeInMins = endHour * 60 + endMin;
 
@@ -220,7 +308,7 @@ export const getAvailableSlots = async (req, res) => {
         // ── 3. Fetch already-booked slots for this date ───────────────────────
         // Query using the ISO date string prefix so UTC storage doesn't drift ±1 day
         const startOfDayUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-        const endOfDayUTC   = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+        const endOfDayUTC = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
 
         const existingAppointments = await Appointment.find({
             doctorId,
@@ -231,7 +319,7 @@ export const getAvailableSlots = async (req, res) => {
             ]
         });
 
-        console.log("existingAppointments:", existingAppointments);
+        // console.log("existingAppointments:", existingAppointments);
 
         // Use a Map to keep track of the specific status of each taken slot
         const slotStatusMap = new Map(existingAppointments.map(app => [app.appointmentTime, app.status]));
@@ -302,8 +390,8 @@ export const lockAppointmentSlot = async (req, res) => {
         if (!doctor) {
             return res.status(404).json({ success: false, message: "Doctor not found" });
         }
-        
-        const fee = consultationType === 'physical' 
+
+        const fee = consultationType === 'physical'
             ? doctor.consultationSettings?.physical?.fee || 0
             : doctor.consultationSettings?.video?.fee || 0;
 
@@ -319,8 +407,8 @@ export const lockAppointmentSlot = async (req, res) => {
 
         const lockedAppointment = await lockSlotUseCase.execute(lockData);
 
-        res.status(200).json({ 
-            success: true, 
+        res.status(200).json({
+            success: true,
             message: "Slot locked successfully",
             id: lockedAppointment._id,
             appointmentId: lockedAppointment._id,
@@ -336,11 +424,11 @@ export const lockAppointmentSlot = async (req, res) => {
         });
     } catch (error) {
         console.error("Lock Slot Error:", error);
-        
+
         if (error.code === 'SLOT_ALREADY_LOCKED') {
             return res.status(409).json({ success: false, code: error.code, message: error.message });
         }
-        
+
         res.status(400).json({ success: false, message: error.message });
     }
 };

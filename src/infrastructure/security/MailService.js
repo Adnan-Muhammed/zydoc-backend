@@ -8,7 +8,7 @@ import nodemailer from 'nodemailer';
 
 export class MailService {
     constructor() {
-        console.log("[MAILER] Configuring with Host:", process.env.EMAIL_HOST);
+        // console.log("[MAILER] Configuring with Host:", process.env.EMAIL_HOST);
         this.transporter = nodemailer.createTransport({
             host: process.env.EMAIL_HOST,
             secure: false, // true for 465, false for other ports
@@ -20,9 +20,9 @@ export class MailService {
     }
 
     async sendOtpEmail(email, otp) {
-        console.log('-=-=-==--=-=-=-=-=-=-=-=-=-=-==-=-=-=-=-=');
+        // console.log('-=-=-==--=-=-=-=-=-=-=-=-=-=-==-=-=-=-=-=');
         console.log(email, otp);
-        console.log('-=-=-==--=-=-=-=-=-=-=-=-=-=-==-=-=-=-=-=');
+        // console.log('-=-=-==--=-=-=-=-=-=-=-=-=-=-==-=-=-=-=-=');
 
 
         const mailOptions = {
@@ -56,16 +56,16 @@ export class MailService {
     }
 
     async sendBookingConfirmation({ patientEmail, doctorEmail, patientName, doctorName, bookingDetails }) {
-        console.log(`[MAILER] Sending booking confirmation for patient: ${patientEmail}, doctor: ${doctorEmail}`);
+        // console.log(`[MAILER] Sending booking confirmation for patient: ${patientEmail}, doctor: ${doctorEmail}`);
         const { date, time, type, fee, reason } = bookingDetails;
         
 
     
 
-        console.log(123456789);
+        // console.log(123456789);
         
-        console.log(patientEmail,doctorEmail,"------------");
-        
+        // console.log(patientEmail,doctorEmail,"------------");
+        // patientEmail. doctorEmail
         const patientMailOptions = {
             from: `"ZyDoc Consulting" <${process.env.EMAIL_USER}>`,
             to: `"${patientName}" <${patientEmail}>`,
@@ -115,11 +115,15 @@ export class MailService {
         try {
             await Promise.all([
 
-                this.transporter.sendMail(patientMailOptions),
+                // this.transporter.sendMail(patientMailOptions),
 
-                this.transporter.sendMail(doctorMailOptions)
+                // this.transporter.sendMail(doctorMailOptions)
+
+                // ['patientMail','doctorMail']
+                // commented the mail sending lines
+                
             ]);
-            console.log("[MAILER] Booking confirmation emails sent successfully");
+            // console.log("[MAILER] Booking confirmation emails sent successfully");
         } catch (error) {
             console.error("[MAILER] Error sending booking confirmation emails:", error);
             // Swallowing error to prevent blocking the main payment verification API response

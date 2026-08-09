@@ -13,6 +13,7 @@ export const adminOnly = (req, res, next) => {
         });
     }
 
-    console.log('Admin Middleware: passed, calling next()'); // TRACE
+    // console.log('Admin Middleware: passed, calling next()'); // TRACE
+    //console log commented
     next();
 };

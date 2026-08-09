@@ -1,22 +1,27 @@
+// src/infrastructure/security/firebaseAdmin.js
 import admin from "firebase-admin";
 import "dotenv/config";
 
-// Helper to ensure the private key is formatted correctly.
-// Environment variables often escape newlines (turning actual line breaks into literal "\n" characters).
-// The Admin SDK requires actual line breaks to parse the certificate.
+/**
+ * Formats the Firebase private key from .env.
+ *
+ * When you copy a private key into a .env file it ends up with literal
+ * "\n" two-character sequences instead of real newline characters.
+ * The Firebase Admin SDK requires real newlines to parse the PEM certificate,
+ * so we replace them here.
+ *
+ * We also strip any wrapping quotes that some .env loaders add.
+ */
 const formatPrivateKey = (key) => {
   if (!key) return undefined;
-  // Remove wrapping quotes if they exist
-  let formattedKey = key.replace(/^"|"$/g, '').replace(/^'|'$/g, '');
-  // Replace literal '\n' characters with actual newlines
-  formattedKey = formattedKey.replace(/\\n/g, "\n");
-  // Trim any stray whitespace or trailing newlines
-  return formattedKey.trim();
+  // Strip surrounding quotes (single or double) added by some env parsers
+  let formatted = key.replace(/^["']|["']$/g, "");
+  // Replace literal two-character sequence  \n  with a real newline character
+  formatted = formatted.replace(/\\n/g, "\n");
+  return formatted.trim();
 };
 
-let adminAuthInstance = null;
-
-// Only initialize if no apps are running (prevents errors on server restarts)
+// Prevent double-initialisation on hot-reloads (development) or Lambda warm starts
 if (!admin.apps.length) {
   try {
     admin.initializeApp({
@@ -26,14 +31,20 @@ if (!admin.apps.length) {
         privateKey: formatPrivateKey(process.env.FIREBASE_PRIVATE_KEY),
       }),
     });
-    adminAuthInstance = admin.auth();
-    console.log("Firebase Admin initialized successfully.");
+    // console.log("✅ Firebase Admin SDK initialized successfully.");
+  // console log commented   
   } catch (error) {
     console.error("\n❌ Firebase Admin Initialization Error:");
-    console.error("The FIREBASE_PRIVATE_KEY in your .env file is likely formatted incorrectly.");
-    console.error(error.message, "\n");
+    console.error(
+      "  → Check that FIREBASE_PRIVATE_KEY in your .env has no extra quotes and uses literal \\n for newlines."
+    );
+    console.error("  →", error.message, "\n");
   }
 }
 
-// Export the auth module so you can use it in your controllers/use-cases
-export const firebaseAuth = adminAuthInstance;
+// Export individual service handles for clean, explicit imports elsewhere
+export const firebaseAuth = admin.apps.length ? admin.auth() : null;
+export const firebaseMessaging = admin.apps.length ? admin.messaging() : null;
+
+// Also export the admin object itself for any advanced use-cases
+export default admin;

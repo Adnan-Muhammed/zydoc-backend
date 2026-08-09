@@ -5,7 +5,8 @@ export class DoctorsPublicController {
   }
 
   async getDoctors(req, res) {
-    console.log('doctors list controller');
+    // console.log('doctors list controller');
+    // console log commented 
     
     try {
       const { search, specialty, consultationType, minRating, page, limit, sortBy, sortOrder } = req.query;
@@ -27,7 +28,7 @@ export class DoctorsPublicController {
       const result = await this.getPublicDoctorsUseCase.execute(filters, options);
 
 
-      console.log(result);
+      // console.log("doctorlist doctorslist doctor list controller again",result);
       
       res.status(200).json({
         success: true,

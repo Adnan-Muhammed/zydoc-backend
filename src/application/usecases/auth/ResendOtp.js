@@ -7,8 +7,8 @@ export class ResendOtp {
 
 
     async execute(email) {
-        console.log(email, "email");
-
+        // console.log(email, "email");
+        // resendotp 
         const user = await this.userRepo.findByEmail(email);
 
         if (!user) {

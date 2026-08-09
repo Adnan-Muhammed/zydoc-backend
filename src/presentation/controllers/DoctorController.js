@@ -11,12 +11,13 @@
 //       if (!userId) {
 //         return res.status(401).json({ success: false, message: "Unauthorized" });
 export class DoctorController {
-    constructor(updateDoctorProfileUseCase, jwtService, patchDoctorProfileUseCase, uploadDoctorDocuments, getDoctorProfile) {
+    constructor(updateDoctorProfileUseCase, jwtService, patchDoctorProfileUseCase, uploadDoctorDocuments, getDoctorProfile, updateFcmToken) {
         this.updateDoctorProfileUseCase = updateDoctorProfileUseCase;
         this.jwtService = jwtService;
         this.patchDoctorProfileUseCase = patchDoctorProfileUseCase;
         this.uploadDoctorDocuments = uploadDoctorDocuments;
         this.getDoctorProfile = getDoctorProfile;
+        this.updateFcmToken = updateFcmToken;
     }
 
     async updateProfile(req, res) {
@@ -179,6 +180,41 @@ export class DoctorController {
             res.status(400).json({
                 success: false,
                 message: error.message || "Failed to fetch profile"
+            });
+        }
+    }
+
+    /**
+     * PATCH /doctors/fcm-token
+     * Receives the FCM registration token from the frontend and persists it
+     * on the authenticated doctor's profile for push notification delivery.
+     */
+    async saveFcmToken(req, res) {
+        try {
+            const userId = req.user?.id || req.user?._id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
+
+            const { fcmToken } = req.body;
+
+            // Allow explicit null to clear/unregister the token (e.g. on logout)
+            if (fcmToken !== null && (typeof fcmToken !== "string" || fcmToken.trim() === "")) {
+                return res.status(400).json({ success: false, message: "A valid fcmToken string is required." });
+            }
+
+            await this.updateFcmToken.execute(userId, fcmToken);
+
+            return res.status(200).json({
+                success: true,
+                message: fcmToken ? "FCM token registered successfully." : "FCM token cleared.",
+            });
+        } catch (error) {
+            console.error("[DoctorController] Error saving FCM token:", error.message);
+            const statusCode = error.message === "User not found." ? 404 : 500;
+            return res.status(statusCode).json({
+                success: false,
+                message: error.message || "Failed to save FCM token.",
             });
         }
     }

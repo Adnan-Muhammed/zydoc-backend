@@ -52,12 +52,15 @@ export class VerifyPayment {
 
     // Trigger booking confirmation email asynchronously without blocking the response
     if (this.mailService && typeof this.mailService.sendBookingConfirmation === 'function') {
-      console.log("[VerifyPayment] mailService is available, fetching booking details...");
+      // console.log("[VerifyPayment] mailService is available, fetching booking details...");
+      //  payment-booking-confirmation mail service  is commented
       this.appointmentRepository.getBookingDetailsForEmail(appointment._id)
         .then(bookingInfo => {
-          console.log("[VerifyPayment] Fetched bookingInfo:", bookingInfo);
+          // console.log("[VerifyPayment] Fetched bookingInfo:", bookingInfo);
+          //  payment-booking-confirmation mail service  is commented
           if (bookingInfo && bookingInfo.patientEmail && bookingInfo.doctorEmail) {
-            console.log("[VerifyPayment] Invoking sendBookingConfirmation...");
+            // console.log("[VerifyPayment] Invoking sendBookingConfirmation...");
+            //  payment-booking-confirmation mail service  is commented
             return this.mailService.sendBookingConfirmation(bookingInfo);
           } else {
             console.log("[VerifyPayment] Skipped sending email due to missing patientEmail or doctorEmail. Info:", bookingInfo);
@@ -70,7 +73,8 @@ export class VerifyPayment {
 
     // Trigger real-time booking notification
     if (this.socketService && typeof this.socketService.emitNewBookingNotification === 'function') {
-      console.log("[VerifyPayment] socketService is available, emitting new booking notification...");
+      // console.log("[VerifyPayment] socketService is available, emitting new booking notification...");
+      //  real time booking notification service console log is commented
       try {
         this.socketService.emitNewBookingNotification(appointment.doctorId, appointment);
       } catch (error) {
@@ -83,3 +87,4 @@ export class VerifyPayment {
     return { success: true, appointment };
   }
 }
+

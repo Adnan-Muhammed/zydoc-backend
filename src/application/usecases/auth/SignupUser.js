@@ -58,7 +58,7 @@ export class SignupUser {
         // 4. SEND THE EMAIL (The new piece)
         try {
             // await this.mailService.sendOtpEmail(email, code);
-            console.log('mailService code commented');
+            // console.log('mailService code commented');
 
         } catch (error) {
             // Logic Choice: You might want to log this error but still return success 

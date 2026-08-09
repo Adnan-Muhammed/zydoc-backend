@@ -67,19 +67,21 @@ export const seedAdmin = async () => {
 
         // Defensive check: Guard against missing crucial environment variables
         if (!adminEmail || !adminPassword) {
-            console.warn('⚠️ Admin seeding skipped: ADMIN_EMAIL or ADMIN_PASSWORD not specified in environmental variables.');
+            // console.warn('⚠️ Admin seeding skipped: ADMIN_EMAIL or ADMIN_PASSWORD not specified in environmental variables.');
+            //console log commented 
             return;
         }
 
         // Check if a user with this email already exists
         const existingAdmin = await SharedUser.findOne({ email: adminEmail.toLowerCase().trim() });
         if (existingAdmin) {
-            console.log('ℹ️ Admin user already seeded in database. Skipping initialization.');
+            // console.log('ℹ️ Admin user already seeded in database. Skipping initialization.');
+            // console log commented 
             return;
         }
 
-        console.log('🌱 Seeding administrative accounts into clean environment...');
-
+        // console.log('🌱 Seeding administrative accounts into clean environment...');
+        // console log commented 
         // 1. Instantiate and preserve the AdminProfile document first
         const adminProfile = new AdminProfile({
             name: adminName || 'System Admin',
@@ -104,8 +106,8 @@ export const seedAdmin = async () => {
         });
 
         await adminUser.save();
-        console.log(`✅ Success: Administrative authority seeded successfully under account execution [${adminEmail}]`);
-
+        // console.log(`✅ Success: Administrative authority seeded successfully under account execution [${adminEmail}]`);
+        // console log commented 
     } catch (error) {
         console.error('❌ Critical Error executing Admin user seed runner configuration:', error);
     }

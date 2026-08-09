@@ -66,7 +66,8 @@ app.use(cors(corsOptions));             // Actual requests
 // Debug Middleware
 if (process.env.NODE_ENV === "development") {
   app.use((req, res, next) => {
-    console.log(`[DEBUG] ${req.method} ${req.url} ${res.statusCode}`);
+
+    // console.log(`[DEBUG] ${req.method} ${req.url} ${res.statusCode}`);
     // console.log('[DEBUG] Auth Header:', req.headers.authorization);
     // console.log('[DEBUG] Cookies:', req.cookies);
     next();
@@ -150,5 +151,5 @@ const server = http.createServer(app);
 socketService.init(server);
 
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  // console.log(`Server is running on port ${PORT}`);
 });
