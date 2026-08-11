@@ -330,7 +330,7 @@ export class MongoUserRepository extends UserRepository {
       sharedDoc.email,
       sharedDoc.password,
       sharedDoc.role,
-      sharedDoc.isDeleted,
+      sharedDoc.accountStatus === 'suspended', // Map suspended status to isDeleted
       sharedDoc.refreshToken,
       sharedDoc.lastLogin,
     );
@@ -934,8 +934,12 @@ export class MongoUserRepository extends UserRepository {
   async delete(id) {
     const user = await SharedUser.findById(id);
     if (user) {
-      const ProfileModel = this._getModel(user.role);
-      await ProfileModel.findByIdAndDelete(user.profileId);
+      if (user.role !== 'unassigned') {
+        const ProfileModel = this._getModel(user.role);
+        if (ProfileModel && user.profileId) {
+          await ProfileModel.findByIdAndDelete(user.profileId);
+        }
+      }
       await SharedUser.findByIdAndDelete(id);
     }
   }

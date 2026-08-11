@@ -34,7 +34,7 @@ export class ResendOtp {
             // We don't throw here so the user can try again in 60s
         }
 
-        console.log(code, 'otp code');
+
 
         return { code, success: true, message: "New OTP sent to your email" };
     }

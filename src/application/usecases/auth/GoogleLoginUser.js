@@ -50,6 +50,27 @@ export class GoogleLoginUser {
       if (user.isDeleted) {
         throw new Error('Your account has been deactivated');
       }
+      
+      if (!user.isVerified) {
+        // The user started an email signup but abandoned the OTP.
+        // Now they are logging in with Google. Let's merge/override.
+        // Instead of complex profile role switching, delete the unverified record
+        // and create a fresh one with the new requested role.
+        await this.userRepository.delete(user.id);
+
+        const userEntity = new User(
+          null,
+          name,
+          email,
+          'OAUTH_PROVIDER_LOGIN',
+          finalRole
+        );
+        userEntity.isVerified = true;
+        userEntity.isProfileCompleted = false;
+        userEntity.avatarUrl = decodedToken.picture || null;
+
+        user = await this.userRepository.createWithProfile(userEntity);
+      }
     }
 
     // 4. Generate custom JWTs

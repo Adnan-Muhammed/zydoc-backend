@@ -47,8 +47,11 @@ export class MailService {
         };
 
         try {
-            const info = await this.transporter.sendMail(mailOptions);
-            return info;
+            // const info = await this.transporter.sendMail(mailOptions);
+            // return info;
+
+            console.log(' commented the otp sending');
+            
         } catch (error) {
             console.error("Error sending email:", error);
             throw new Error("Email delivery service failed");

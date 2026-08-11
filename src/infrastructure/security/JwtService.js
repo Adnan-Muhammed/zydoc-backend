@@ -34,4 +34,20 @@ export class JwtService {
             return null;
         }
     }
+
+    generateSignupToken(userId) {
+        return jwt.sign(
+            { id: userId, type: 'signup' },
+            process.env.JWT_SECRET || 'access_secret',
+            { expiresIn: '15m' }
+        );
+    }
+
+    verifySignupToken(token) {
+        try {
+            return jwt.verify(token, process.env.JWT_SECRET || 'access_secret');
+        } catch (e) {
+            return null;
+        }
+    }
 }

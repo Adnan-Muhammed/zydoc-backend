@@ -15,26 +15,40 @@ export class SignupUser {
     }
 
     // async execute({ name, email, password, role = 'patient' }) {
-    async execute({ name, email, password, role }) {
+    async execute({ name, email, password, role, signupToken }) {
         if (!email || !password) {
             throw new Error('Email and password are required');
         }
-
 
         const validRoles = ['patient', 'doctor'];
         if (!validRoles.includes(role)) {
             throw new Error('Invalid role specified');
         }
 
+        // Cleanup orphaned record if user is retrying with a new email via "Change Email"
+        if (signupToken) {
+            const decoded = this.authService.verifySignupToken(signupToken);
+            if (decoded && decoded.type === 'signup') {
+                const oldUser = await this.userRepo.findById(decoded.id);
+                if (oldUser && !oldUser.isVerified) {
+                    await this.userRepo.delete(oldUser.id);
+                }
+            }
+        }
+
         const existingUser = await this.userRepo.findByEmail(email);
         if (existingUser) {
-            throw new Error('User already exists');
+            if (!existingUser.isVerified) {
+                // Graceful recovery: Delete abandoned unverified account and proceed with fresh signup
+                await this.userRepo.delete(existingUser.id);
+            } else {
+                throw new Error('User already exists');
+            }
         }
 
         const { code, expiresAt } = this.otpService.generateOtp(10);
 
         const hashedPassword = await this.authService.hashPassword(password);
-
 
         // 2. CREATE THE DOMAIN ENTITY
         // We use the entity to ensure the data is valid before saving
@@ -51,20 +65,22 @@ export class SignupUser {
 
         if (!userEntity.isValid()) throw new Error('Invalid user data');
 
-        await this.userRepo.createWithProfile(userEntity);
+        const savedUser = await this.userRepo.createWithProfile(userEntity);
 
+        const newSignupToken = this.authService.generateSignupToken(savedUser.id || savedUser._id);
 
-
-        // 4. SEND THE EMAIL (The new piece)
+        // 4. SEND THE EMAIL
         try {
-            // await this.mailService.sendOtpEmail(email, code);
-            // console.log('mailService code commented');
-
+            await this.mailService.sendOtpEmail(email, code);
         } catch (error) {
-            // Logic Choice: You might want to log this error but still return success 
-            // since the user was created in the DB and they can "Resend OTP" later.
             console.error("Email delivery failed:", error);
         }
-        return { code, success: true, message: "Please verify your email" };
+        
+        return { 
+            code, // We can optionally remove this from payload for security if it's sent via email
+            success: true, 
+            message: "Please verify your email",
+            signupToken: newSignupToken
+        };
     }
 }
