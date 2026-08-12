@@ -1,15 +1,3 @@
-// // src/infrastructure/database/models/DoctorProfile.js
-
-// import mongoose from "mongoose";
-
-// const doctorSchema = new mongoose.Schema({
-//     name: { type: String, required: true },
-//     specialization: { type: String },
-//     licenseNumber: { type: String },
-//     availability: [String],
-// }, { timestamps: true });
-
-// export default mongoose.model("Doctor", doctorSchema);
 
 // src/infrastructure/database/models/DoctorProfile.js 
 import mongoose from "mongoose";
