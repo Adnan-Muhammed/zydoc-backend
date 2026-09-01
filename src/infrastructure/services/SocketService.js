@@ -1,4 +1,5 @@
 import { Server } from "socket.io";
+import { registerWebRTCRoutes } from "../../modules/video-call/routes/socketRoutes.js";
 
 class SocketService {
   constructor() {
@@ -42,6 +43,9 @@ class SocketService {
         }
       });
 
+      // WebRTC Signaling Events
+      registerWebRTCRoutes(socket, this.io);
+
       socket.on("disconnect", () => {
         // console.log(`[SocketService] Client disconnected: ${socket.id}`);
         // console log commented 
@@ -57,6 +61,8 @@ class SocketService {
             break;
           }
         }
+
+        // WebRTC disconnect is handled by the video-call module
       });
     });
 

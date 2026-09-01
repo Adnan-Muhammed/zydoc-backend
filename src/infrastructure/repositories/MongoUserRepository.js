@@ -190,7 +190,7 @@ export class MongoUserRepository extends UserRepository {
         "otp.code": code,
         "otp.expiresAt": expiresAt,
       },
-      { new: true },
+      { returnDocument: 'after' },
     );
   }
 
@@ -242,7 +242,7 @@ export class MongoUserRepository extends UserRepository {
         user.profileId,
         updateData,
         {
-          new: true,           // Return updated document (Mongoose option)
+          returnDocument: 'after',           // Return updated document (Mongoose option)
           runValidators: true
         },
       );
@@ -284,7 +284,7 @@ export class MongoUserRepository extends UserRepository {
         user.profileId,
         updateData,
         {
-          new: true,           // Return updated document (Mongoose option)
+          returnDocument: 'after',           // Return updated document (Mongoose option)
           runValidators: true
         }
       );

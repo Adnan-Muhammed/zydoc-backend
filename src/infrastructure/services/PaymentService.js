@@ -23,6 +23,15 @@ class PaymentService {
     }
   }
 
+  async refundPayment(paymentId, amount) {
+    try {
+      return await this.razorpay.payments.refund(paymentId, { amount });
+    } catch (error) {
+      console.error('Error refunding Razorpay payment:', error);
+      throw error;
+    }
+  }
+
   verifySignature(orderId, paymentId, signature) {
     try {
       const body = orderId + '|' + paymentId;

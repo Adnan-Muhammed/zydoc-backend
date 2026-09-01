@@ -59,13 +59,25 @@ export const verifyPayment = async (req, res) => {
     if (verificationResult.success) {
       const appointment = verificationResult.appointment;
       
+      const visitTypeStr = appointment.patientType === 'NEW' ? 'New Consultation' : appointment.patientType === 'FOLLOW_UP' ? 'Follow-up Appointment' : 'Appointment';
+      
+      // Create DB notification for Patient
+      await createNotificationUseCase.execute({
+        recipientId: appointment.patientId,
+        recipientModel: 'User',
+        type: 'BOOKING',
+        title: `${visitTypeStr} Confirmed`,
+        message: `Your ${visitTypeStr.toLowerCase()} is confirmed.`,
+        referenceId: appointment._id
+      });
+
       // Create DB notification for Doctor (will also emit 'new_notification' via socket)
       await createNotificationUseCase.execute({
         recipientId: appointment.doctorId,
         recipientModel: 'Doctor',
         type: 'BOOKING',
-        title: 'New Appointment Booked',
-        message: 'A patient has booked a new appointment with you.',
+        title: `New ${visitTypeStr} Booked`,
+        message: `A patient has booked a new ${visitTypeStr.toLowerCase()} with you.`,
         referenceId: appointment._id
       });
       
@@ -77,8 +89,8 @@ export const verifyPayment = async (req, res) => {
             recipientId: admin._id,
             recipientModel: 'Admin',
             type: 'BOOKING',
-            title: 'New Appointment Booked',
-            message: `A new appointment has been booked for Doctor ${appointment.doctorId}.`,
+            title: `New ${visitTypeStr} Booked`,
+            message: `A new ${visitTypeStr.toLowerCase()} has been booked for Doctor ${appointment.doctorId}.`,
             referenceId: appointment._id
           });
         }
@@ -93,6 +105,10 @@ export const verifyPayment = async (req, res) => {
     });
   } catch (error) {
     console.error('PaymentController.verifyPayment Error:', error);
-    return res.status(400).json({ success: false, message: error.message });
+    const errorResponse = { success: false, message: error.message };
+    if (error.code) {
+      errorResponse.code = error.code;
+    }
+    return res.status(400).json(errorResponse);
   }
 };

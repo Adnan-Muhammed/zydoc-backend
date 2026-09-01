@@ -60,7 +60,9 @@ export class MailService {
 
     async sendBookingConfirmation({ patientEmail, doctorEmail, patientName, doctorName, bookingDetails }) {
         // console.log(`[MAILER] Sending booking confirmation for patient: ${patientEmail}, doctor: ${doctorEmail}`);
-        const { date, time, type, fee, reason } = bookingDetails;
+        const { date, time, type, patientType, fee, reason } = bookingDetails;
+        
+        const visitTypeString = patientType === 'NEW' ? 'New Consultation' : patientType === 'FOLLOW_UP' ? 'Follow-up Appointment' : 'Appointment';
         
 
     
@@ -75,9 +77,9 @@ export class MailService {
             subject: 'Appointment Booking Confirmation',
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
-                    <h2 style="color: #1f2937; text-align: center;">Appointment Confirmed</h2>
+                    <h2 style="color: #1f2937; text-align: center;">${visitTypeString} Confirmed</h2>
                     <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">
-                        Hello ${patientName}, your appointment has been successfully scheduled.
+                        Hello ${patientName}, your ${visitTypeString.toLowerCase()} has been successfully scheduled.
                     </p>
                     <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
                         <p style="margin: 5px 0; color: #374151;"><strong>Doctor:</strong> Dr. ${doctorName}</p>
@@ -98,9 +100,9 @@ export class MailService {
             subject: 'New Appointment Booking',
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
-                    <h2 style="color: #1f2937; text-align: center;">New Appointment Scheduled</h2>
+                    <h2 style="color: #1f2937; text-align: center;">New ${visitTypeString} Scheduled</h2>
                     <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">
-                        Hello Dr. ${doctorName}, you have a new appointment booking.
+                        Hello Dr. ${doctorName}, you have a new ${visitTypeString.toLowerCase()} booking.
                     </p>
                     <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
                         <p style="margin: 5px 0; color: #374151;"><strong>Patient:</strong> ${patientName}</p>

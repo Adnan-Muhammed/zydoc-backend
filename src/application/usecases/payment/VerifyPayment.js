@@ -16,12 +16,8 @@ export class VerifyPayment {
 
     if (!isValid) throw new Error('Invalid payment signature');
 
-    const appointment = await this.appointmentRepository.findByOrderId(razorpay_order_id);
+    let appointment = await this.appointmentRepository.findByOrderId(razorpay_order_id);
     if (!appointment) throw new Error('Appointment not found for this order');
-
-    appointment.status = 'scheduled';
-    appointment.paymentId = razorpay_payment_id;
-    appointment.paymentStatus = 'paid';
 
     let commissionRate = 0;
     if (['video', 'online'].includes(appointment.consultationType)) {
@@ -32,10 +28,28 @@ export class VerifyPayment {
     const calculatedAdminCommission = appointment.fee * commissionRate;
     const calculatedDoctorAmount = appointment.fee - calculatedAdminCommission;
     
-    appointment.adminCommission = calculatedAdminCommission;
-    appointment.doctorAmount = calculatedDoctorAmount;
+    const atomicUpdateData = {
+        paymentId: razorpay_payment_id,
+        paymentStatus: 'paid',
+        adminCommission: calculatedAdminCommission,
+        doctorAmount: calculatedDoctorAmount
+    };
 
-    await this.appointmentRepository.update(appointment._id, appointment);
+    // Attempt atomic update to lock in the booking
+    const updatedAppointment = await this.appointmentRepository.confirmBooking(appointment._id, appointment.lockedBy, atomicUpdateData);
+
+    if (!updatedAppointment) {
+        // Atomic check failed: slot was probably expired or taken.
+        // Trigger automatic refund.
+        if (this.paymentService.refundPayment) {
+            await this.paymentService.refundPayment(razorpay_payment_id, Math.round(appointment.fee * 100));
+        }
+        const error = new Error('Slot expired. Payment refunded.');
+        error.code = 'SLOT_EXPIRED_REFUNDED';
+        throw error;
+    }
+
+    appointment = updatedAppointment; // use the updated data for subsequent operations
 
     if (this.transactionRepository) {
       await this.transactionRepository.create({
@@ -49,6 +63,45 @@ export class VerifyPayment {
         status: 'completed'
       });
     }
+
+    // ── Scenario 3 Conflict Detection ──────────────────────────────────────────
+    // Check if this newly booked slot overlaps with "now", meaning the doctor 
+    // might be in an active session extending into this time.
+    try {
+        const now = new Date();
+        const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
+        if (timeStr) {
+            let [hours, minutes] = timeStr.split(":");
+            let h = parseInt(hours, 10);
+            const m = parseInt(minutes, 10) || 0;
+            
+            if (modifier) {
+                if (modifier.toUpperCase() === "PM" && h < 12) h += 12;
+                if (modifier.toUpperCase() === "AM" && h === 12) h = 0;
+            }
+            
+            // Assume the slot is for today to check if it's an immediate booking
+            const slotLocal = new Date(
+                now.getFullYear(), now.getMonth(), now.getDate(),
+                h, m, 0, 0
+            );
+
+            // If the slot starts within 5 mins, or started within the last 45 mins
+            const diffMinutes = (slotLocal.getTime() - now.getTime()) / 60000;
+            
+            if (diffMinutes <= 5 && diffMinutes >= -45) {
+                if (this.socketService && typeof this.socketService.emitToUser === 'function') {
+                    console.log(`[VerifyPayment] Urgent conflict detected for Doctor ${appointment.doctorId}! Emitting urgent-slot-booked.`);
+                    this.socketService.emitToUser(appointment.doctorId.toString(), "urgent-slot-booked", {
+                        appointmentId: appointment._id
+                    });
+                }
+            }
+        }
+    } catch (err) {
+        console.error("[VerifyPayment] Error in conflict detection logic:", err);
+    }
+    // ───────────────────────────────────────────────────────────────────────────
 
     // Trigger booking confirmation email asynchronously without blocking the response
     if (this.mailService && typeof this.mailService.sendBookingConfirmation === 'function') {

@@ -19,7 +19,7 @@ export class MongoTransactionRepository extends TransactionRepository {
         return await Transaction.findByIdAndUpdate(
             id,
             { status },
-            { new: true }
+            { returnDocument: 'after' }
         );
     }
 }

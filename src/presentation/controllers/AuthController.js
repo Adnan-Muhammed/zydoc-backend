@@ -54,17 +54,18 @@ export class AuthController {
 
   // ✅ HELPER: Set Auth Cookies
   _setAuthCookies(res, accessToken, refreshToken) {
-    // Access Token: 2 minutes
+    // Access Token: 15 minutes
     if (accessToken) {
       res.cookie("accessToken", accessToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
         path: "/",
-        maxAge: 2 * 60 * 1000,
+        maxAge: 15 * 60 * 1000,
       });
     }
 
+    
     // Refresh Token: 7 days
     if (refreshToken) {
       res.cookie("refreshToken", refreshToken, {

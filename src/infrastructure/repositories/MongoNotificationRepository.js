@@ -14,7 +14,7 @@ class MongoNotificationRepository {
     return await Notification.findByIdAndUpdate(
       notificationId,
       { isRead: true },
-      { new: true }
+      { returnDocument: 'after' }
     );
   }
 

@@ -44,7 +44,7 @@ export class UpdateFcmToken {
     await Doctor.findByIdAndUpdate(
       sharedUser.profileId,
       { $set: { fcmToken: fcmToken ?? null } },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     console.log(

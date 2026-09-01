@@ -5,9 +5,12 @@ import { UnlockSlot } from "../../application/usecases/appointment/UnlockSlot.js
 import { GetPatientAppointments } from "../../application/usecases/appointment/GetPatientAppointments.js";
 import { GetDoctorAppointments } from "../../application/usecases/appointment/GetDoctorAppointments.js";
 import { GetAllAppointmentsAdmin } from "../../application/usecases/appointment/GetAllAppointmentsAdmin.js";
+import { GetDoctorHistory } from "../../application/usecases/appointment/GetDoctorHistory.js";
+import { ExtendSlotLock } from "../../application/usecases/appointment/ExtendSlotLock.js";
 import { MongoAppointmentRepository } from "../../infrastructure/repositories/MongoAppointmentRepository.js";
 import { fcmService } from "../../infrastructure/services/FcmService.js";
 import { socketService } from "../../infrastructure/services/SocketService.js";
+import mongoose from "mongoose";
 
 const appointmentRepo = new MongoAppointmentRepository();
 const lockSlotUseCase = new LockSlot(appointmentRepo);
@@ -15,6 +18,8 @@ const unlockSlotUseCase = new UnlockSlot(appointmentRepo);
 const getPatientAppointmentsUseCase = new GetPatientAppointments(appointmentRepo);
 const getDoctorAppointmentsUseCase = new GetDoctorAppointments(appointmentRepo);
 const getAllAppointmentsAdminUseCase = new GetAllAppointmentsAdmin(appointmentRepo);
+const getDoctorHistoryUseCase = new GetDoctorHistory(appointmentRepo);
+const extendSlotLockUseCase = new ExtendSlotLock(appointmentRepo);
 
 // //Create a new appointment
 // export const createAppointment = async (req, res) => {
@@ -171,11 +176,69 @@ export const getDoctorAppointments = async (req, res) => {
 
         const doctorId = sharedUser.profileId;
 
+        // Lazy update No-Shows before fetching upcoming appointments
+        await appointmentRepo.lazyUpdateNoShows(doctorId);
+
         const appointments = await getDoctorAppointmentsUseCase.execute(doctorId);
 
         res.status(200).json({ success: true, appointments });
     } catch (error) {
         console.error("Get Doctor Appointments Error:", error);
+        res.status(500).json({ success: false, message: "Server error", error: error.message });
+    }
+};
+
+export const getDoctorHistory = async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
+        }
+
+        const sharedUser = await SharedUser.findById(userId);
+        if (!sharedUser || !sharedUser.profileId) {
+            return res.status(404).json({ success: false, message: "Doctor profile not found." });
+        }
+
+        const doctorId = sharedUser.profileId;
+
+        // Lazy update No-Shows before fetching history appointments
+        await appointmentRepo.lazyUpdateNoShows(doctorId);
+
+        const appointments = await getDoctorHistoryUseCase.execute(doctorId);
+
+        res.status(200).json({ success: true, appointments });
+    } catch (error) {
+        console.error("Get Doctor History Error:", error);
+        res.status(500).json({ success: false, message: "Server error", error: error.message });
+    }
+};
+
+export const updateAppointmentStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        if (!['completed', 'no-show'].includes(status)) {
+            return res.status(400).json({ success: false, message: "Invalid status update" });
+        }
+
+        const appointment = await Appointment.findById(id);
+        if (!appointment) {
+            return res.status(404).json({ success: false, message: "Appointment not found" });
+        }
+
+        if (appointment.status !== 'scheduled') {
+            return res.status(400).json({ success: false, message: "Only 'scheduled' appointments can be updated" });
+        }
+
+        appointment.status = status;
+        await appointment.save();
+
+        res.status(200).json({ success: true, message: `Appointment marked as ${status}`, appointment });
+    } catch (error) {
+        console.error("Update Appointment Status Error:", error);
         res.status(500).json({ success: false, message: "Server error", error: error.message });
     }
 };
@@ -190,7 +253,14 @@ export const getAvailableSlots = async (req, res) => {
             return res.status(400).json({ success: false, message: "Date is required" });
         }
 
-        const doctor = await Doctor.findById(doctorId);
+        let doctorObjectId;
+        try {
+            doctorObjectId = new mongoose.Types.ObjectId(doctorId);
+        } catch (error) {
+            return res.status(400).json({ success: false, message: "Invalid Doctor ID format" });
+        }
+
+        const doctor = await Doctor.findById(doctorObjectId);
         if (!doctor) {
             return res.status(404).json({ success: false, message: "Doctor not found" });
         }
@@ -288,16 +358,41 @@ export const getAvailableSlots = async (req, res) => {
         const BUFFER = 10;
         const TOTAL_STEP = SLOT_DURATION + BUFFER;
 
-        let [currentHour, currentMin] = start.split(':').map(Number);
-        const [endHour, endMin] = end.split(':').map(Number);
+        const parseTimeStr = (tStr) => {
+            if (!tStr) return { h: 0, m: 0 };
+            const [time, modifier] = tStr.trim().split(/\s+/);
+            let [h, m] = time.split(':').map(Number);
+            if (isNaN(h)) h = 0;
+            if (isNaN(m)) m = 0;
+            if (modifier) {
+                if (modifier.toUpperCase() === 'PM' && h < 12) h += 12;
+                if (modifier.toUpperCase() === 'AM' && h === 12) h = 0;
+            }
+            return { h, m };
+        };
 
-        let currentTimeInMins = currentHour * 60 + currentMin;
-        const endTimeInMins = endHour * 60 + endMin;
+        const formatTo12H = (h, m) => {
+            const period = h >= 12 && h < 24 ? 'PM' : 'AM';
+            const hr12 = h % 12 || 12;
+            return `${String(hr12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`;
+        };
+
+        let startParsed = parseTimeStr(start);
+        let endParsed = parseTimeStr(end);
+
+        let currentTimeInMins = startParsed.h * 60 + startParsed.m;
+        let endTimeInMins = endParsed.h * 60 + endParsed.m;
+
+        // Midnight crossing logic
+        if (endTimeInMins <= currentTimeInMins) {
+            endTimeInMins += 24 * 60;
+        }
 
         while (currentTimeInMins + SLOT_DURATION <= endTimeInMins) {
-            const h = Math.floor(currentTimeInMins / 60);
+            const h = Math.floor(currentTimeInMins / 60) % 24;
+            const hFull = Math.floor(currentTimeInMins / 60); // use this for AM/PM correct mapping on next day
             const m = currentTimeInMins % 60;
-            slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+            slots.push(formatTo12H(hFull, m));
             currentTimeInMins += TOTAL_STEP;
         }
 
@@ -311,7 +406,7 @@ export const getAvailableSlots = async (req, res) => {
         const endOfDayUTC = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
 
         const existingAppointments = await Appointment.find({
-            doctorId,
+            doctorId: doctorObjectId,
             appointmentDate: { $gte: startOfDayUTC, $lte: endOfDayUTC },
             $or: [
                 { status: { $in: ['scheduled', 'completed'] } },
@@ -321,8 +416,8 @@ export const getAvailableSlots = async (req, res) => {
 
         // console.log("existingAppointments:", existingAppointments);
 
-        // Use a Map to keep track of the specific status of each taken slot
-        const slotStatusMap = new Map(existingAppointments.map(app => [app.appointmentTime, app.status]));
+        // Use a Map to keep track of the specific appointment of each taken slot
+        const slotMap = new Map(existingAppointments.map(app => [app.appointmentTime, app]));
 
         // ── 4. Determine "now" in the same UTC reference ──────────────────────
         const now = new Date();
@@ -332,31 +427,69 @@ export const getAvailableSlots = async (req, res) => {
 
         // ── 5. Build enriched slot list with 3-state status ──────────────────
         const allSlotsWithStatus = slots.map(slot => {
-            const existingStatus = slotStatusMap.get(slot);
+            const existingApp = slotMap.get(slot);
+            const existingStatus = existingApp ? existingApp.status : undefined;
 
             let slotPast = false;
+            let elapsedMinutes = -1;
+            let isClosed = false;
+            let isFollowUpOnly = false;
+
             if (!isFutureDate) {
                 if (!isToday) {
                     // Entirely past day
                     slotPast = true;
                 } else {
                     // Today: compare slot time to current UTC time
-                    const [slotH, slotM] = slot.split(':').map(Number);
-                    const slotUTC = new Date(Date.UTC(
-                        now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
+                    const parseTimeStr = (tStr) => {
+                        if (!tStr) return { h: 0, m: 0 };
+                        const [timePart, modifier] = tStr.trim().split(/\s+/);
+                        let [h, m] = timePart.split(':').map(Number);
+                        if (isNaN(h)) h = 0;
+                        if (isNaN(m)) m = 0;
+                        if (modifier) {
+                            if (modifier.toUpperCase() === 'PM' && h < 12) h += 12;
+                            if (modifier.toUpperCase() === 'AM' && h === 12) h = 0;
+                        }
+                        return { h, m };
+                    };
+                    const { h: slotH, m: slotM } = parseTimeStr(slot);
+                    
+                    const slotLocal = new Date(
+                        now.getFullYear(), now.getMonth(), now.getDate(),
                         slotH, slotM, 0, 0
-                    ));
-                    slotPast = slotUTC.getTime() <= now.getTime();
+                    );
+                    
+                    elapsedMinutes = (now.getTime() - slotLocal.getTime()) / 60000;
+                    
+                    if (elapsedMinutes > 20) {
+                        isClosed = true;
+                    } else if (elapsedMinutes > 10) {
+                        isFollowUpOnly = true;
+                    }
+
+                    const slotEndTime = new Date(slotLocal.getTime() + 30 * 60000);
+                    slotPast = slotEndTime.getTime() <= now.getTime();
                 }
             }
 
             let status;
-            if (slotPast) status = 'Past';
-            else if (existingStatus === 'locked') status = 'Locked';
-            else if (existingStatus) status = 'Booked';
-            else status = 'Available';
+            if (slotPast || isClosed) status = 'past'; // using 'past' maps correctly to the frontend's greyed-out visual state
+            else if (existingStatus === 'locked') status = 'locked';
+            else if (existingStatus) status = 'booked';
+            else status = 'available';
 
-            return { time: slot, status, available: status === 'Available', isLocked: status === 'Locked' };
+            return { 
+                time: slot, 
+                status, 
+                available: status === 'available', 
+                isLocked: status === 'locked',
+                lockedBy: existingApp?.lockedBy || null,
+                razorpayOrderId: existingApp?.razorpayOrderId || null,
+                isBookable: status === 'available',
+                isExpired: isClosed,
+                isFollowUpOnly
+            };
         });
 
         const availableSlots = allSlotsWithStatus
@@ -379,7 +512,7 @@ export const getAvailableSlots = async (req, res) => {
 export const lockAppointmentSlot = async (req, res) => {
     try {
         const patientId = req.user.id || req.user._id;
-        const { doctorId, date, time, consultationType, notes } = req.body;
+        const { doctorId, date, time, consultationType, patientType, notes } = req.body;
 
         if (!patientId) {
             return res.status(401).json({ success: false, message: "Unauthorized." });
@@ -401,6 +534,7 @@ export const lockAppointmentSlot = async (req, res) => {
             appointmentDate: date,
             appointmentTime: time,
             consultationType,
+            patientType,
             fee,
             notes
         };
@@ -419,7 +553,8 @@ export const lockAppointmentSlot = async (req, res) => {
                 date: new Date(lockedAppointment.appointmentDate).toISOString().split('T')[0],
                 time: lockedAppointment.appointmentTime,
                 status: "Locked",
-                lockExpiryTime: lockedAppointment.lockExpiryTime
+                lockExpiryTime: lockedAppointment.lockExpiryTime,
+                razorpayOrderId: lockedAppointment.razorpayOrderId
             }
         });
     } catch (error) {
@@ -450,6 +585,32 @@ export const unlockAppointmentSlot = async (req, res) => {
     } catch (error) {
         console.error("Unlock Slot Error:", error);
         res.status(400).json({ success: false, message: error.message });
+    }
+};
+
+export const extendAppointmentLock = async (req, res) => {
+    try {
+        const patientId = req.user.id || req.user._id;
+        const { slotId } = req.body;
+
+        if (!patientId) {
+            return res.status(401).json({ success: false, message: "Unauthorized." });
+        }
+
+        if (!slotId) {
+            return res.status(400).json({ success: false, message: "Slot ID is required" });
+        }
+
+        const extendedAppointment = await extendSlotLockUseCase.execute(slotId, patientId);
+
+        res.status(200).json({
+            success: true,
+            message: "Slot lock extended successfully",
+            lockExpiryTime: extendedAppointment.lockExpiryTime
+        });
+    } catch (error) {
+        console.error("Extend Slot Lock Error:", error);
+        res.status(400).json({ success: false, message: error.message, code: error.code });
     }
 };
 

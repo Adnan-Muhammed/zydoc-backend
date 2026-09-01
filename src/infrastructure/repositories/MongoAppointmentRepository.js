@@ -6,6 +6,7 @@ import SharedUser from "../database/models/SharedUser.js";
 
 export class MongoAppointmentRepository extends AppointmentRepository {
     async lockSlot(lockData) {
+        const currentTime = new Date();
         const existing = await Appointment.findOne({
             doctorId: lockData.doctorId,
             appointmentDate: lockData.appointmentDate,
@@ -14,7 +15,23 @@ export class MongoAppointmentRepository extends AppointmentRepository {
         });
 
         if (existing) {
-            return null;
+            if (
+                existing.status === 'locked' &&
+                existing.lockedBy &&
+                existing.lockedBy.toString() === lockData.patientId.toString() &&
+                existing.lockExpiryTime > currentTime
+            ) {
+                // If it's already locked by the same user and not expired, return it
+                return existing;
+            }
+
+            if (existing.status === 'locked' && existing.lockExpiryTime <= currentTime) {
+                // If it's an expired lock, delete it so we can create a new lock
+                await Appointment.deleteOne({ _id: existing._id });
+            } else {
+                // Locked by someone else or already booked
+                return null;
+            }
         }
 
         const appointment = new Appointment({
@@ -40,6 +57,22 @@ export class MongoAppointmentRepository extends AppointmentRepository {
         return await Appointment.findOneAndDelete(query);
     }
 
+    async extendLock(slotId, userId, additionalMinutes) {
+        return await Appointment.findOneAndUpdate(
+            { _id: slotId, lockedBy: userId, status: 'locked' },
+            { $set: { lockExpiryTime: new Date(Date.now() + additionalMinutes * 60 * 1000) } },
+            { returnDocument: 'after' }
+        );
+    }
+
+    async confirmBooking(slotId, userId, updateData) {
+        return await Appointment.findOneAndUpdate(
+            { _id: slotId, lockedBy: userId, status: 'locked' },
+            { $set: { status: 'scheduled', ...updateData } },
+            { returnDocument: 'after' }
+        );
+    }
+
     async findExpiredLocks(currentTime) {
         return await Appointment.find({
             status: 'locked',
@@ -54,7 +87,10 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     }
 
     async findByDoctorIdWithPatientDetails(doctorId) {
-        return await Appointment.find({ doctorId })
+        return await Appointment.find({ 
+            doctorId,
+            status: 'scheduled'
+        })
             .populate({
                 path: 'patientId',
                 select: 'email profileId roleModel googleName googleAvatarUrl',
@@ -64,6 +100,67 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                 }
             })
             .sort({ appointmentDate: 1, appointmentTime: 1 });
+    }
+
+    async findDoctorHistoryWithPatientDetails(doctorId) {
+        return await Appointment.find({
+            doctorId,
+            status: { $in: ['completed', 'no-show'] }
+        })
+            .populate({
+                path: 'patientId',
+                select: 'email profileId roleModel googleName googleAvatarUrl',
+                populate: {
+                    path: 'profileId',
+                    select: 'firstName lastName avatarUrl dateOfBirth gender phone bloodGroup medicalHistory'
+                }
+            })
+            .sort({ appointmentDate: -1, appointmentTime: -1 });
+    }
+
+    async lazyUpdateNoShows(doctorId) {
+        const now = new Date();
+        const fortyMinsInMs = 40 * 60 * 1000;
+        const pastThresholdTime = new Date(now.getTime() - fortyMinsInMs);
+
+        // Fetch Scheduled appointments to manually check time because time is stored as string 'HH:mm A'
+        const scheduledAppointments = await Appointment.find({
+            doctorId,
+            status: 'scheduled'
+        });
+
+        const noShowIds = scheduledAppointments.filter(app => {
+            const dateStr = app.appointmentDate ? new Date(app.appointmentDate).toISOString().split('T')[0] : null;
+            if (!dateStr || !app.appointmentTime) return false;
+
+            const [timeStr, modifier] = app.appointmentTime.trim().split(/\s+/);
+            let [h, m] = timeStr.split(':').map(Number);
+            if (isNaN(h) || isNaN(m)) return false;
+
+            if (modifier) {
+                if (modifier.toUpperCase() === 'PM' && h < 12) h += 12;
+                if (modifier.toUpperCase() === 'AM' && h === 12) h = 0;
+            }
+
+            const apptDate = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00.000Z`);
+            // Compare local/UTC matching depending on how frontend saves it.
+            // If date is stored at UTC midnight, and time is local, this requires exact timezone.
+            // Better to use 
+            //
+            // if it exists or reconstruct UTC correctly.
+            // Assuming the simple Date construction:
+            const [year, month, day] = dateStr.split('-').map(Number);
+            const slotLocal = new Date(year, month - 1, day, h, m, 0, 0);
+
+            return slotLocal < pastThresholdTime;
+        }).map(app => app._id);
+
+        if (noShowIds.length > 0) {
+            await Appointment.updateMany(
+                { _id: { $in: noShowIds } },
+                { $set: { status: 'no-show' } }
+            );
+        }
     }
 
     async findAllWithDetails() {
@@ -122,6 +219,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                 date: appointment.appointmentDate ? new Date(appointment.appointmentDate).toDateString() : '',
                 time: appointment.appointmentTime,
                 type: appointment.consultationType,
+                patientType: appointment.patientType,
                 fee: appointment.fee,
                 reason: appointment.notes
             }
