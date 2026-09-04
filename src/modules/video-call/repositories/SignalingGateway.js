@@ -26,7 +26,16 @@ export class SignalingGateway {
     this.io.to(userId).emit(event, payload);
   }
 
+  emitToSocket(socketId, event, payload) {
+    this.io.to(socketId).emit(event, payload);
+  }
+
+  getSocket(socketId) {
+    return this.io.sockets.sockets.get(socketId);
+  }
+
   getCurrentRoom() {
     return this.socket.currentVideoRoom;
   }
 }
+

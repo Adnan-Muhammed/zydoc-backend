@@ -248,6 +248,7 @@ export const getAvailableSlots = async (req, res) => {
     try {
         const { doctorId } = req.params;
         const { date, consultationType } = req.query; // e.g. "2026-07-15", "video"
+console.log(1,'qwerty',2,'asdf');
 
         if (!date) {
             return res.status(400).json({ success: false, message: "Date is required" });

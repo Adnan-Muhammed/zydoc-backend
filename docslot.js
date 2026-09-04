@@ -1,13 +1,22 @@
 import mongoose from "mongoose";
 import SharedUser from "./src/infrastructure/database/models/SharedUser.js";
 import Doctor from "./src/infrastructure/database/models/DoctorProfile.js";
+// import { off } from "process";
 
 const MONGO_URI = "mongodb://127.0.0.1:27017/zydoc-app";
 
+  const doctor =[
+    "final@gmail.com",
+    // "last@gmail.com",
+    // "ajsal@gmail.com",
+    // "adnan.shajahan786@gmail.com"
+  ]
 async function updateDoctorSlot(addMins = 2) {
     try {
         await mongoose.connect(MONGO_URI);
-        const doctorUser = await SharedUser.findOne({ email: "final@gmail.com", role: "doctor" });
+   for (const email of doctor ){
+
+        const doctorUser = await SharedUser.findOne({ email, role: "doctor" });
         if (!doctorUser || !doctorUser.profileId) {
             console.error("Doctor final@gmail.com not found or missing profileId");
             return;
@@ -42,9 +51,17 @@ async function updateDoctorSlot(addMins = 2) {
             doctor.workingHours = {};
         }
         if (!doctor.workingHours.online) {
-            doctor.workingHours.online = {};
+            doctor.workingHours.online = {}; 
         }
-
+        if (doctor.workingHours.offline) { 
+            console.log(Object.keys(doctor.workingHours.offline));
+            // doctor.workingHours.inPerson = {};
+            console.log('inPerson',12345678);
+    }
+    if (Object.keys(doctor.workingHours.offline).length===0) {
+         
+            console.log('doctor.workingHours.offline',12345678);
+    }
         for (const day of days) {
             if (!doctor.workingHours.online[day]) {
                 doctor.workingHours.online[day] = {};
@@ -53,20 +70,31 @@ async function updateDoctorSlot(addMins = 2) {
             doctor.workingHours.online[day].start = startTimeString;
             doctor.workingHours.online[day].end = endTimeString;
         }
+
+
+        for (const day of days) {
+            if (!doctor.workingHours.offline[day]) {
+                doctor.workingHours.offline[day] = {};
+            }
+            doctor.workingHours.offline[day].active = true;
+            doctor.workingHours.offline[day].start = startTimeString;
+            doctor.workingHours.offline[day].end = endTimeString;
+        }
         
         await doctor.save();
         console.log("Doctor slot updated successfully!");
+    }
     } catch (err) {
         console.error("Error:", err);
     } finally {
         await mongoose.disconnect();
-    }
+    } 
 }
 
 
 
 
-const minTime = 2;
+const minTime = 2
 
 updateDoctorSlot(minTime);
  

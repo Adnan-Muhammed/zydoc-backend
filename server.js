@@ -120,7 +120,8 @@ app.use("/api/user", userRoutes); //  get profile and put profile
 
 
 
-app.use("/api/admin/users", adminRoutes);  // auto generated code need update admin side view users list,block,unblock,delete,restore
+app.use("/api/admin/users", adminRoutes);
+app.use("/api/admin", adminRoutes);
 // 
 // app.use(
 //   "/api/admin/doctors",

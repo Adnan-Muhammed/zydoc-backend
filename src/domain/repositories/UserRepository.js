@@ -11,4 +11,5 @@ export class UserRepository {
     async delete(id) { throw new Error('Method not implemented'); }
     async getPublicDoctors(filters, options) { throw new Error('Method not implemented'); }
     async getPublicDoctorById(id) { throw new Error('Method not implemented'); }
+    async updateBankDetails(doctorId, bankDetails) { throw new Error('Method not implemented'); }
 }

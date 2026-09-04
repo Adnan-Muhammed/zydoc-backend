@@ -274,6 +274,41 @@ export class MongoUserRepository extends UserRepository {
 
   }
 
+  async updateBankDetails(doctorId, bankDetails) {
+    try {
+      const user = await SharedUser.findById(doctorId);
+      let profileId = doctorId;
+
+      if (user) {
+        if (user.role !== "doctor") throw new Error("User is not a doctor");
+        profileId = user.profileId;
+      }
+
+      const updatedProfile = await Doctor.findByIdAndUpdate(
+        profileId,
+        {
+          $set: {
+            bankDetails: {
+              accountNumber: bankDetails.accountNumber || "",
+              ifscCode: bankDetails.ifscCode || "",
+              bankName: bankDetails.bankName || "",
+              accountHolderName: bankDetails.accountHolderName || "",
+            }
+          }
+        },
+        { returnDocument: 'after', runValidators: true }
+      );
+
+      if (!updatedProfile) {
+        throw new Error("Doctor profile not found");
+      }
+
+      return updatedProfile.bankDetails;
+    } catch (error) {
+      throw error;
+    }
+  }
+
   async updatePatientProfile(userId, updateData) {
     try {
       const user = await SharedUser.findById(userId);
@@ -737,7 +772,13 @@ export class MongoUserRepository extends UserRepository {
       registrationNumber: p.licenseNumber,
       experience: p.yearsOfExperience,
       hospital: p.clinicName,
-      patients: p.reviewCount || 0
+      patients: p.reviewCount || 0,
+      bankDetails: p.bankDetails || {
+        accountNumber: "",
+        ifscCode: "",
+        bankName: "",
+        accountHolderName: "",
+      },
     };
   }
 

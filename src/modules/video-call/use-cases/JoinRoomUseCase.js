@@ -2,6 +2,9 @@
 // Since it's in-memory, if the server restarts, ongoing calls will lose their timer sync.
 export const roomStartTimes = new Map();
 
+// In-memory store to track active participants per room: roomId -> Map<userId, socketId>
+export const roomActiveParticipants = new Map();
+
 export class JoinRoomUseCase {
   constructor(signalingGateway, appointmentRepository) {
     this.signalingGateway = signalingGateway;
@@ -13,14 +16,43 @@ export class JoinRoomUseCase {
     
     const roomId = `video_${appointmentId}`;
 
+    // --- MULTIPLE TABS / DUPLICATE SESSION VALIDATION ---
+    if (userId) {
+      const currentSocketId = this.signalingGateway.socket?.id;
+      const participants = roomActiveParticipants.get(roomId);
+      if (participants && participants.has(userId)) {
+        const existingSocketId = participants.get(userId);
+        if (existingSocketId && existingSocketId !== currentSocketId) {
+          const existingSocket = this.signalingGateway.getSocket(existingSocketId);
+          if (existingSocket && existingSocket.connected) {
+            console.warn(`[JoinRoomUseCase] User ${userId} attempted to join room ${roomId} from duplicate tab (${currentSocketId}) while already active (${existingSocketId}).`);
+            this.signalingGateway.emitToSocket(currentSocketId, "join_rejected", {
+              reason: "ALREADY_IN_ROOM",
+              code: "MULTIPLE_TABS_DETECTED",
+              message: "You are already active in this consultation room in another browser tab or device."
+            });
+            return; // Block duplicate tab join
+          } else {
+            // Previous socket connection is dead/stale, clean it up
+            participants.delete(userId);
+          }
+        }
+      }
+    }
+
     // --- BACKEND VALIDATION ---
     if (this.appointmentRepository) {
       try {
         const appointment = await this.appointmentRepository.findById(appointmentId);
         if (appointment) {
           if (['completed', 'no-show', 'cancelled'].includes(appointment.status)) {
-            // Emit error to the socket trying to join
-            this.signalingGateway.emitToUser(userId, "call_error", { message: "This consultation has already ended." });
+            // Emit error directly to the socket trying to join
+            if (this.signalingGateway.socket?.id) {
+              this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", { message: "This consultation has already ended." });
+            }
+            if (userId) {
+              this.signalingGateway.emitToUser(userId, "call_error", { message: "This consultation has already ended." });
+            }
             return; // Block join
           }
 
@@ -45,9 +77,9 @@ export class JoinRoomUseCase {
 
             // Block early join if trying to join more than 15 minutes before scheduled time
             if (currentMs < scheduledStartMs - 15 * 60000) {
-              this.signalingGateway.emitToUser(userId, "call_error", { 
-                message: "You can only join the consultation up to 15 minutes before the scheduled time." 
-              });
+              const errMsg = { message: "You can only join the consultation up to 15 minutes before the scheduled time." };
+              if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+              if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
               return; // Block join
             }
 
@@ -68,15 +100,17 @@ export class JoinRoomUseCase {
 
             // Block initial join if past the late entry cutoff
             if (!hasJoinedBefore && currentMs >= lateJoinCutoffMs) {
-              this.signalingGateway.emitToUser(userId, "call_error", { 
-                message: `The late entry cutoff window (${cutoffMinsForMessage} mins) has expired for this ${appointment.patientType} consultation.` 
-              });
+              const errMsg = { message: `The late entry cutoff window (${cutoffMinsForMessage} mins) has expired for this ${appointment.patientType} consultation.` };
+              if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+              if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
               return; // Block join
             }
             
             // Always enforce absolute 40 min max window for everyone (even for re-joins)
             if (currentMs >= scheduledStartMs + 40 * 60000) {
-              this.signalingGateway.emitToUser(userId, "call_error", { message: "The consultation window has expired." });
+              const errMsg = { message: "The consultation window has expired." };
+              if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+              if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
               return; // Block join
             }
           }
@@ -111,7 +145,13 @@ export class JoinRoomUseCase {
         console.error("[JoinRoomUseCase] Error validating appointment status:", err);
       }
     }
-    // --------------------------
+    // Register user in roomActiveParticipants
+    if (userId) {
+      if (!roomActiveParticipants.has(roomId)) {
+        roomActiveParticipants.set(roomId, new Map());
+      }
+      roomActiveParticipants.get(roomId).set(userId, this.signalingGateway.socket.id);
+    }
 
     const numClients = this.signalingGateway.getRoomSize(roomId);
 
@@ -288,23 +328,25 @@ export class JoinRoomUseCase {
               sessionStatus = "LATE";
             }
 
+            // Calculate precise end times based on Session Start Status
             let primaryEndTimeMs;
             let absoluteHardLimitMs;
 
+            const standardDurationMs = baseDurationMinutes * 60000;
+            const maxExtensionMs = 15 * 60000; // 15-minute extension allowance
+
             if (sessionStatus === "EARLY") {
-                // If started early (e.g. 09:50), strictly limit to 40 mins (10:30). No extensions.
-                primaryEndTimeMs = sessionStartMs + baseDurationMinutes * 60000;
-                absoluteHardLimitMs = primaryEndTimeMs;
+                primaryEndTimeMs = sessionStartMs + standardDurationMs;
+                // Allow extension up to +15 mins past primary time until next patient joins
+                absoluteHardLimitMs = primaryEndTimeMs + maxExtensionMs;
             } else if (sessionStatus === "ON_TIME") {
-                // If started on time (09:57 - 10:04), end exactly at the scheduled end time (10:40). No extensions past it.
                 primaryEndTimeMs = scheduledEndMs;
-                absoluteHardLimitMs = scheduledEndMs;
+                // Allow extension past scheduled end time until next patient joins
+                absoluteHardLimitMs = scheduledEndMs + maxExtensionMs;
             } else {
-                // If started LATE (e.g. 10:10)
-                primaryEndTimeMs = Math.min(sessionStartMs + baseDurationMinutes * 60000, scheduledEndMs);
-                absoluteHardLimitMs = isNextSlotBooked 
-                    ? scheduledEndMs 
-                    : sessionStartMs + baseDurationMinutes * 60000;
+                // LATE start
+                primaryEndTimeMs = Math.min(sessionStartMs + standardDurationMs, scheduledEndMs);
+                absoluteHardLimitMs = primaryEndTimeMs + maxExtensionMs;
             }
 
             const primaryEndTime = new Date(primaryEndTimeMs).toISOString();

@@ -4,11 +4,14 @@ import express from "express";
 import upload from "../middleware/uploadMiddleware.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { MongoUserRepository } from "../../infrastructure/repositories/MongoUserRepository.js";
+import { MongoTransactionRepository } from "../../infrastructure/repositories/MongoTransactionRepository.js";
 
 import { UpdateDoctorProfile } from "../../application/usecases/doctor/UpdateDoctorProfile.js";
 import { PatchDoctorProfile } from "../../application/usecases/doctor/PatchDoctorProfile.js";
 import { GetDoctorProfile } from "../../application/usecases/doctor/GetDoctorProfile.js";
 import { UpdateFcmToken } from "../../application/usecases/doctor/UpdateFcmToken.js";
+import { GetDoctorEarnings } from "../../application/usecases/doctor/GetDoctorEarnings.js";
+import { UpdateBankDetails } from "../../application/usecases/doctor/UpdateBankDetails.js";
 
 import { DoctorController } from "../controllers/DoctorController.js";
 import { JwtService } from '../../infrastructure/security/JwtService.js';
@@ -16,12 +19,15 @@ import { JwtService } from '../../infrastructure/security/JwtService.js';
 const router = express.Router();
 
 const userRepository = new MongoUserRepository();
+const transactionRepository = new MongoTransactionRepository();
 const jwtService = new JwtService();
+
 const updateDoctorProfileUseCase = new UpdateDoctorProfile(userRepository);
 const patchDoctorProfileUseCase = new PatchDoctorProfile(userRepository);
 const getDoctorProfileUseCase = new GetDoctorProfile(userRepository);
-
 const updateFcmTokenUseCase = new UpdateFcmToken();
+const getDoctorEarningsUseCase = new GetDoctorEarnings(transactionRepository);
+const updateBankDetailsUseCase = new UpdateBankDetails(userRepository);
 
 const doctorController = new DoctorController(
   updateDoctorProfileUseCase,
@@ -29,7 +35,9 @@ const doctorController = new DoctorController(
   patchDoctorProfileUseCase,
   null, // uploadDoctorDocuments (not implemented yet)
   getDoctorProfileUseCase,
-  updateFcmTokenUseCase
+  updateFcmTokenUseCase,
+  getDoctorEarningsUseCase,
+  updateBankDetailsUseCase
 );
 
 router.post(
@@ -52,6 +60,10 @@ router.put("/profile/qualifications", protect, upload.any(), (req, res) => docto
 router.patch("/profile/preferences", protect, (req, res) => doctorController.updatePreferences(req, res));
 router.patch("/profile/schedule", protect, (req, res) => doctorController.updateSchedule(req, res));
 router.post("/profile/certificates", protect, upload.array("certificates", 10), (req, res) => doctorController.uploadCertificates(req, res));
+
+// Doctor Earnings & Payout Bank Details
+router.get("/earnings", protect, (req, res) => doctorController.getEarnings(req, res));
+router.patch("/bank-details", protect, (req, res) => doctorController.updateBankDetails(req, res));
 
 // FCM Token Registration
 // Called automatically by the frontend after notification permission is granted.

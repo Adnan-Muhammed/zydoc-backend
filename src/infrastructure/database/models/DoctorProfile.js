@@ -113,6 +113,14 @@ const doctorSchema = new mongoose.Schema(
     rating: { type: Number, default: 5.0 },
     reviewCount: { type: Number, default: 0 },
     fcmToken: { type: String },
+
+    // Bank Details for payout settlements
+    bankDetails: {
+      accountNumber: { type: String, default: "" },
+      ifscCode: { type: String, default: "" },
+      bankName: { type: String, default: "" },
+      accountHolderName: { type: String, default: "" },
+    },
   },
   { timestamps: true },
 );

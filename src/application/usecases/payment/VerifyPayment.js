@@ -60,7 +60,7 @@ export class VerifyPayment {
         adminCommission: calculatedAdminCommission,
         doctorAmount: calculatedDoctorAmount,
         paymentId: razorpay_payment_id,
-        status: 'completed'
+        status: 'pending'
       });
     }
 

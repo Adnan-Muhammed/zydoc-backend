@@ -11,13 +11,15 @@
 //       if (!userId) {
 //         return res.status(401).json({ success: false, message: "Unauthorized" });
 export class DoctorController {
-    constructor(updateDoctorProfileUseCase, jwtService, patchDoctorProfileUseCase, uploadDoctorDocuments, getDoctorProfile, updateFcmToken) {
+    constructor(updateDoctorProfileUseCase, jwtService, patchDoctorProfileUseCase, uploadDoctorDocuments, getDoctorProfile, updateFcmToken, getDoctorEarningsUseCase, updateBankDetailsUseCase) {
         this.updateDoctorProfileUseCase = updateDoctorProfileUseCase;
         this.jwtService = jwtService;
         this.patchDoctorProfileUseCase = patchDoctorProfileUseCase;
         this.uploadDoctorDocuments = uploadDoctorDocuments;
         this.getDoctorProfile = getDoctorProfile;
         this.updateFcmToken = updateFcmToken;
+        this.getDoctorEarningsUseCase = getDoctorEarningsUseCase;
+        this.updateBankDetailsUseCase = updateBankDetailsUseCase;
     }
 
     async updateProfile(req, res) {
@@ -217,6 +219,55 @@ export class DoctorController {
             return res.status(statusCode).json({
                 success: false,
                 message: error.message || "Failed to save FCM token.",
+            });
+        }
+    }
+
+    async getEarnings(req, res) {
+        try {
+            const userId = req.user?.id || req.user?._id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
+
+            const page = parseInt(req.query.page, 10) || 1;
+            const limit = parseInt(req.query.limit, 10) || 10;
+
+            const earningsData = await this.getDoctorEarningsUseCase.execute(userId, { page, limit });
+
+            return res.status(200).json({
+                success: true,
+                ...earningsData
+            });
+        } catch (error) {
+            console.error("[DoctorController] Error getting earnings:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to fetch earnings"
+            });
+        }
+    }
+
+    async updateBankDetails(req, res) {
+        try {
+            const userId = req.user?.id || req.user?._id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
+
+            const bankDetails = req.body;
+            const updatedBankDetails = await this.updateBankDetailsUseCase.execute(userId, bankDetails);
+
+            return res.status(200).json({
+                success: true,
+                message: "Bank details updated successfully",
+                bankDetails: updatedBankDetails
+            });
+        } catch (error) {
+            console.error("[DoctorController] Error updating bank details:", error);
+            return res.status(400).json({
+                success: false,
+                message: error.message || "Failed to update bank details"
             });
         }
     }

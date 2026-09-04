@@ -2,13 +2,13 @@ import mongoose from "mongoose";
 
 const transactionSchema = new mongoose.Schema({
     appointmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Appointment', required: true },
-    doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    patientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true },
+    patientId: { type: mongoose.Schema.Types.ObjectId, ref: 'SharedUser', required: true },
     amount: { type: Number, required: true },
     adminCommission: { type: Number, required: true },
     doctorAmount: { type: Number, required: true },
     paymentId: { type: String, required: true },
-    status: { type: String, enum: ['pending', 'completed', 'failed', 'refunded'], default: 'pending' },
+    status: { type: String, enum: ['pending', 'completed', 'failed', 'refunded', 'settled'], default: 'pending' },
 }, { timestamps: true });
 
 // Performance indexes
