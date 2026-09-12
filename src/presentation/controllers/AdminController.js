@@ -27,6 +27,8 @@ export class AdminController {
     async settleTransaction(req, res) {
         try {
             const transactionId = req.params.id;
+            const adminId = req.user?.id || req.user?._id;
+
             if (!transactionId) {
                 return res.status(400).json({
                     success: false,
@@ -34,7 +36,7 @@ export class AdminController {
                 });
             }
 
-            const updatedTransaction = await this.settleDoctorPayoutUseCase.execute(transactionId);
+            const updatedTransaction = await this.settleDoctorPayoutUseCase.execute(transactionId, adminId);
 
             return res.status(200).json({
                 success: true,
@@ -43,7 +45,8 @@ export class AdminController {
             });
         } catch (error) {
             console.error("[AdminController] Error settling transaction:", error);
-            return res.status(400).json({
+            const statusCode = error.statusCode || 400;
+            return res.status(statusCode).json({
                 success: false,
                 message: error.message || "Failed to settle transaction"
             });

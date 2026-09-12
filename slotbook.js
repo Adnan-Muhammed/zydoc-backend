@@ -58,7 +58,7 @@ async function createAppointment(slotIndex = 0, doctorEmail , patientEmail) {
             doctorId: doctorUser.profileId, // Using profileId as requested
             appointmentDate: dateOnly,
             appointmentTime: formattedTime,
-            consultationType: "video",
+            consultationType: "online",
             patientType: "FOLLOW_UP",
             status: "scheduled",
             lockedBy: patientUser._id,

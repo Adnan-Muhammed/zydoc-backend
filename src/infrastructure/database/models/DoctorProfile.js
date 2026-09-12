@@ -17,12 +17,11 @@ const qualificationSchema = new mongoose.Schema(
   { _id: false },
 );
 
-// Sub-document for shift operations window
-const shiftTimeSchema = new mongoose.Schema(
+// Sub-document for individual shift/session time blocks
+const timeBlockSchema = new mongoose.Schema(
   {
-    start: { type: String, default: "09:00" }, // 24hr string formats matching browser inputs
-    end: { type: String, default: "17:00" },
-    active: { type: Boolean, default: false },
+    start: { type: String, required: true }, // 24hr format "HH:mm" (e.g. "09:00")
+    end: { type: String, required: true },   // 24hr format "HH:mm" (e.g. "13:00")
   },
   { _id: false },
 );
@@ -48,6 +47,20 @@ const doctorSchema = new mongoose.Schema(
     yearsOfExperience: { type: Number, min: 0 },
     bio: { type: String, trim: true },
 
+    // Consultation Slot Duration in minutes (e.g., 10, 15, 20, 30, 45, 60)
+    slotDuration: {
+      type: Number,
+      required: true,
+      default: 15,
+    },
+
+    // Doctor Operating / Clinic Timezone (e.g. 'Asia/Kolkata', 'America/New_York')
+    timezone: {
+      type: String,
+      default: "Asia/Kolkata",
+      trim: true,
+    },
+
     // Media Attachments and Document File Paths (URLs pointing to secure uploads bucket)
     avatarUrl: { type: String, default: "" },
     medicalCertificateUrl: { type: String, default: "" },
@@ -71,13 +84,13 @@ const doctorSchema = new mongoose.Schema(
     // Embedded Qualifications data matrix mapping
     qualifications: [qualificationSchema],
 
-    // Granular Channel Consultation Parameter maps
+    // Standardized Channel Consultation Parameter maps (online / offline)
     consultationSettings: {
-      video: {
+      online: {
         enabled: { type: Boolean, default: true },
         fee: { type: Number, default: 0 },
       },
-      physical: {
+      offline: {
         enabled: { type: Boolean, default: false },
         fee: { type: Number, default: 0 },
         clinicName: { type: String, trim: true },
@@ -85,27 +98,25 @@ const doctorSchema = new mongoose.Schema(
       },
     },
 
-    // Weekly Operations Time Shift block configuration layout
+    // Weekly Operations Time Shift block configuration layout (Array of multiple sessions/breaks per day)
     workingHours: {
       online: {
-        mondayToFriday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        monday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        tuesday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        wednesday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        thursday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        friday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        saturday: { type: shiftTimeSchema, default: () => ({ active: false, start: "10:00", end: "14:00" }) },
-        sunday: { type: shiftTimeSchema, default: () => ({ active: false, start: "00:00", end: "00:00" }) },
+        monday: { type: [timeBlockSchema], default: [] },
+        tuesday: { type: [timeBlockSchema], default: [] },
+        wednesday: { type: [timeBlockSchema], default: [] },
+        thursday: { type: [timeBlockSchema], default: [] },
+        friday: { type: [timeBlockSchema], default: [] },
+        saturday: { type: [timeBlockSchema], default: [] },
+        sunday: { type: [timeBlockSchema], default: [] },
       },
       offline: {
-        mondayToFriday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        monday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        tuesday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        wednesday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        thursday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        friday: { type: shiftTimeSchema, default: () => ({ active: false, start: "09:00", end: "17:00" }) },
-        saturday: { type: shiftTimeSchema, default: () => ({ active: false, start: "10:00", end: "14:00" }) },
-        sunday: { type: shiftTimeSchema, default: () => ({ active: false, start: "00:00", end: "00:00" }) },
+        monday: { type: [timeBlockSchema], default: [] },
+        tuesday: { type: [timeBlockSchema], default: [] },
+        wednesday: { type: [timeBlockSchema], default: [] },
+        thursday: { type: [timeBlockSchema], default: [] },
+        friday: { type: [timeBlockSchema], default: [] },
+        saturday: { type: [timeBlockSchema], default: [] },
+        sunday: { type: [timeBlockSchema], default: [] },
       }
     },
 

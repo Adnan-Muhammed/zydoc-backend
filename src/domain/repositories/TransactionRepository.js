@@ -7,6 +7,7 @@ export class TransactionRepository {
     async updateStatus(id, status) { throw new Error('Method not implemented'); }
     async updateTransactionStatus(transactionId, status) { throw new Error('Method not implemented'); }
     async updateStatusByAppointmentId(appointmentId, status) { throw new Error('Method not implemented'); }
+    async settleTransactionAtomic(transactionId, adminId) { throw new Error('Method not implemented'); }
     async findAllTransactionsAdmin(page, limit) { throw new Error('Method not implemented'); }
     async findAllAdmin(page, limit) { throw new Error('Method not implemented'); }
     async findTransactionsByDoctorId(doctorId, page, limit) { throw new Error('Method not implemented'); }

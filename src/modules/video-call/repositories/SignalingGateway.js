@@ -7,7 +7,7 @@ export class SignalingGateway {
   joinRoom(roomId) {
     this.socket.join(roomId);
     this.socket.currentVideoRoom = roomId;
-  }
+  } 
 
   getRoomSize(roomId) {
     const room = this.io.sockets.adapter.rooms.get(roomId);

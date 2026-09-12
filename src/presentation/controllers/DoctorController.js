@@ -8,8 +8,10 @@
 //   async updateProfile(req, res) {
 //     try {
 //       const userId = req.user?.id;
-//       if (!userId) {
-//         return res.status(401).json({ success: false, message: "Unauthorized" });
+import { validateWorkingHours } from "../../infrastructure/utils/scheduleValidator.js";
+import Appointment from "../../infrastructure/database/models/Appointment.js";
+import SharedUser from "../../infrastructure/database/models/SharedUser.js";
+
 export class DoctorController {
     constructor(updateDoctorProfileUseCase, jwtService, patchDoctorProfileUseCase, uploadDoctorDocuments, getDoctorProfile, updateFcmToken, getDoctorEarningsUseCase, updateBankDetailsUseCase) {
         this.updateDoctorProfileUseCase = updateDoctorProfileUseCase;
@@ -114,11 +116,18 @@ export class DoctorController {
 
     async updateConsultation(req, res) {
         return this._handlePatch(req, res, (req) => {
-            const { enableVideo, videoFee, enablePhysical, physicalFee, clinicName, clinicAddress } = req.body;
+            const body = req.body || {};
+            const isOnline = body.online?.enabled ?? body.enableVideo ?? false;
+            const onlineFee = Number(body.online?.fee ?? body.videoFee ?? 0);
+            const isOffline = body.offline?.enabled ?? body.enablePhysical ?? false;
+            const offlineFee = Number(body.offline?.fee ?? body.physicalFee ?? 0);
+            const clinicName = body.offline?.clinicName ?? body.clinicName ?? "";
+            const clinicAddress = body.offline?.clinicAddress ?? body.clinicAddress ?? "";
+
             return {
                 consultationSettings: {
-                    video: { enabled: enableVideo, fee: videoFee },
-                    physical: { enabled: enablePhysical, fee: physicalFee, clinicName, clinicAddress }
+                    online: { enabled: Boolean(isOnline), fee: onlineFee },
+                    offline: { enabled: Boolean(isOffline), fee: offlineFee, clinicName, clinicAddress }
                 }
             };
         });
@@ -157,7 +166,68 @@ export class DoctorController {
     }
 
     async updateSchedule(req, res) {
-        return this._handlePatch(req, res, (req) => ({ workingHours: req.body.workingHours }));
+        try {
+            const userId = req.user?.id || req.user?._id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
+
+            const slotDuration = Number(req.body.slotDuration) || 15;
+            const { workingHours, forceUpdate, timezone } = req.body;
+
+            validateWorkingHours(workingHours, slotDuration);
+
+            // Check for upcoming active bookings if forceUpdate is not true
+            if (!forceUpdate) {
+                const user = await SharedUser.findById(userId);
+                const doctorProfileId = user?.profileId;
+
+                if (doctorProfileId) {
+                    const now = new Date();
+                    const startOfToday = new Date(now.setHours(0, 0, 0, 0));
+
+                    const hasUpcoming = await Appointment.exists({
+                        doctorId: doctorProfileId,
+                        appointmentDate: { $gte: startOfToday },
+                        status: { $in: ['scheduled', 'locked'] }
+                    });
+
+                    if (hasUpcoming) {
+                        return res.status(409).json({
+                            success: false,
+                            conflict: true,
+                            message: "You have upcoming consultations. Changing the schedule times or duration may cause time lapses and irregular slots around your existing bookings. Do you want to proceed anyway?"
+                        });
+                    }
+                }
+            }
+
+            const updatePayload = {
+                workingHours,
+                slotDuration
+            };
+            if (timezone && typeof timezone === 'string') {
+                updatePayload.timezone = timezone.trim();
+            }
+
+            const updatedDoctor = await this.patchDoctorProfileUseCase.execute(userId, updatePayload, req.files);
+
+            return res.status(200).json({
+                success: true,
+                message: "Schedule updated successfully",
+                user: this._mapUserResponse(updatedDoctor),
+                profile: updatedDoctor
+            });
+        } catch (error) {
+            console.error("Error updating schedule:", error);
+            const statusCode = this._isClientError(error) ? 400 : 500;
+            const field = this._getErrorField(error);
+            return res.status(statusCode).json({
+                success: false,
+                message: error.message || "Failed to update schedule",
+                ...(field && { field }),
+            });
+        }
     }
 
     async uploadCertificates(req, res) {

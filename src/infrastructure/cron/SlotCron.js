@@ -12,9 +12,11 @@ cron.schedule('* * * * *', async () => {
         const expiredLocks = await appointmentRepo.findExpiredLocks(now);
         
         for (const appointment of expiredLocks) {
-            await appointmentRepo.unlockSlot(appointment._id, appointment.lockedBy);
-           // console.log(`Unlocked expired appointment slot: ${appointment._id}`);
-           // slot expiry cron
+            // Mark as 'expired' instead of deleting.
+            // This preserves the razorpayOrderId so VerifyPayment can find
+            // the record and issue a refund if Razorpay captured the payment
+            // after the lock TTL elapsed.
+            await appointmentRepo.expireLockedSlot(appointment._id);
         }
     } catch (error) { 
         console.error("Error in SlotCron:", error);

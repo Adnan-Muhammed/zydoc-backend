@@ -7,7 +7,7 @@ export class LeaveRoomUseCase {
   }
 
   async execute(roomId, role, userId, socketId) {
-    if (!roomId) return;
+    if (!roomId) return; 
 
     // Remove user/socket from active participants map
     if (roomActiveParticipants.has(roomId)) {

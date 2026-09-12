@@ -1,6 +1,8 @@
 import express from 'express';
 import { protect } from '../middleware/authMiddleware.js';
 import { adminOnly } from '../middleware/adminMiddleware.js';
+import os from 'os';
+import { systemMetrics } from '../../infrastructure/monitoring/metrics.js';
 
 // Interface Adapters
 import { MongoUserRepository } from '../../infrastructure/repositories/MongoUserRepository.js';
@@ -9,6 +11,7 @@ import { BcryptService } from '../../infrastructure/security/BcryptService.js';
 import { JwtService } from '../../infrastructure/security/JwtService.js';
 import { AdminUserController } from '../../presentation/controllers/AdminUserController.js';
 import { AdminController } from '../../presentation/controllers/AdminController.js';
+import { getDisputedAppointmentsAdmin, refundDisputedAppointmentAdmin } from '../../presentation/controllers/AppointmentController.js';
 
 // Use Cases        
 import { ListUsers } from '../../application/usecases/admin/ListUsers.js';
@@ -63,9 +66,48 @@ const adminController = new AdminController(
 // Apply middleware to all routes
 router.use(protect, adminOnly);
 
+// System Health & Logs Routes
+router.get('/health', (req, res) => {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const memUsage = (usedMem / totalMem) * 100;
+    
+    // CPU load average over 1 min (os.loadavg()[0]), relative to logical cores
+    const cpus = os.cpus().length;
+    const cpuLoad = (os.loadavg()[0] / cpus) * 100;
+    
+    const uptimeSeconds = process.uptime();
+    const uptimeStr = `${Math.floor(uptimeSeconds / 3600)}h ${Math.floor((uptimeSeconds % 3600) / 60)}m`;
+
+    const errorRate = systemMetrics.totalRequests > 0 
+        ? ((systemMetrics.failedRequests / systemMetrics.totalRequests) * 100)
+        : 0;
+        
+    res.json({
+        serverLoad: cpuLoad > 100 ? 100 : cpuLoad,
+        memoryUsage: memUsage,
+        uptime: uptimeStr,
+        uptimeSeconds: uptimeSeconds,
+        latency: systemMetrics.averageResponseTime,
+        errorRate: errorRate,
+        totalRequests: systemMetrics.totalRequests,
+        failedRequests: systemMetrics.failedRequests,
+        status: errorRate > 5 ? 'Warning' : 'Healthy'
+    });
+});
+
+router.get('/logs', (req, res) => {
+    res.json(systemMetrics.recentLogs);
+});
+
 // Transactions & Payouts Routes
 router.get('/transactions', (req, res) => adminController.getTransactions(req, res));
 router.patch('/transactions/:id/settle', (req, res) => adminController.settleTransaction(req, res));
+
+// Appointments Dispute & Refund Routes
+router.get('/appointments/disputed', getDisputedAppointmentsAdmin);
+router.post('/appointments/:id/refund', refundDisputedAppointmentAdmin);
 
 // User Management Routes
 router.get('/', (req, res) => adminUserController.getUsers(req, res));

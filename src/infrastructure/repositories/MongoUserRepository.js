@@ -204,39 +204,7 @@ export class MongoUserRepository extends UserRepository {
       if (!user) throw new Error("User not found");
       if (user.role !== "doctor") throw new Error("User is not a doctor");
 
-      if (updateData.consultationSettings) {
-        const currentProfile = await Doctor.findById(user.profileId).lean();
 
-        // Deep copy workingHours to avoid mutating the lean object directly in a weird way
-        let newWorkingHours = updateData.workingHours ? JSON.parse(JSON.stringify(updateData.workingHours)) : (currentProfile.workingHours ? JSON.parse(JSON.stringify(currentProfile.workingHours)) : { online: {}, offline: {} });
-        let modified = false;
-
-        const days = ['mondayToFriday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-
-        if (updateData.consultationSettings.video && updateData.consultationSettings.video.enabled === false) {
-          newWorkingHours.online = newWorkingHours.online || {};
-          days.forEach(day => {
-            if (newWorkingHours.online[day]) {
-              newWorkingHours.online[day].active = false;
-              modified = true;
-            }
-          });
-        }
-
-        if (updateData.consultationSettings.physical && updateData.consultationSettings.physical.enabled === false) {
-          newWorkingHours.offline = newWorkingHours.offline || {};
-          days.forEach(day => {
-            if (newWorkingHours.offline[day]) {
-              newWorkingHours.offline[day].active = false;
-              modified = true;
-            }
-          });
-        }
-
-        if (modified) {
-          updateData.workingHours = newWorkingHours;
-        }
-      }
 
       const updatedProfile = await Doctor.findByIdAndUpdate(
         user.profileId,
@@ -382,6 +350,17 @@ export class MongoUserRepository extends UserRepository {
       entity.governmentIdStatus = profile.governmentIdStatus;
       entity.governmentIdRejectionReason = profile.governmentIdRejectionReason;
       entity.qualifications = profile.qualifications || [];
+      entity.consultationSettings = profile.consultationSettings;
+      entity.workingHours = profile.workingHours;
+      entity.slotDuration = profile.slotDuration || 15;
+      entity.specialty = profile.specialty;
+      entity.yearsOfExperience = profile.yearsOfExperience;
+      entity.bio = profile.bio;
+      entity.phone = profile.phone;
+      entity.firstName = profile.firstName;
+      entity.lastName = profile.lastName;
+      entity.expertiseTags = profile.expertiseTags || [];
+      entity.languages = profile.languages || [];
     }
 
     entity.profileId = profile?._id;
@@ -622,22 +601,40 @@ export class MongoUserRepository extends UserRepository {
       query.specialty = { $regex: new RegExp(specialty, "i") };
     }
 
+    const conditions = [];
+
     if (search) {
       const searchRegex = new RegExp(search, "i");
-      query.$or = [
-        { firstName: searchRegex },
-        { lastName: searchRegex },
-        { specialty: searchRegex },
-        { expertiseTags: { $in: [searchRegex] } }
-      ];
+      conditions.push({
+        $or: [
+          { firstName: searchRegex },
+          { lastName: searchRegex },
+          { specialty: searchRegex },
+          { expertiseTags: { $in: [searchRegex] } }
+        ]
+      });
     }
 
-    if (consultationType) {
-      if (consultationType === "video") {
-        query["consultationSettings.video.enabled"] = true;
-      } else if (consultationType === "physical") {
-        query["consultationSettings.physical.enabled"] = true;
+    if (consultationType && consultationType !== "all") {
+      if (consultationType === "video" || consultationType === "online") {
+        conditions.push({
+          $or: [
+            { "consultationSettings.online.enabled": true },
+            { "consultationSettings.video.enabled": true }
+          ]
+        });
+      } else if (consultationType === "physical" || consultationType === "offline") {
+        conditions.push({
+          $or: [
+            { "consultationSettings.offline.enabled": true },
+            { "consultationSettings.physical.enabled": true }
+          ]
+        });
       }
+    }
+
+    if (conditions.length > 0) {
+      query.$and = conditions;
     }
 
     if (minRating) {
@@ -650,7 +647,7 @@ export class MongoUserRepository extends UserRepository {
     } else if (sortBy === "experience") {
       sort.yearsOfExperience = sortOrder === "asc" ? 1 : -1;
     } else if (sortBy === "fee") {
-      sort["consultationSettings.video.fee"] = sortOrder === "asc" ? 1 : -1;
+      sort["consultationSettings.online.fee"] = sortOrder === "asc" ? 1 : -1;
     } else {
       sort.createdAt = sortOrder === "asc" ? 1 : -1;
     }
@@ -673,6 +670,7 @@ export class MongoUserRepository extends UserRepository {
 
     const doctors = doctorProfiles.map(p => ({
       id: p._id,
+      _id: p._id,
       firstName: p.firstName,
       lastName: p.lastName,
       name: `${p.firstName} ${p.lastName}`,
@@ -687,6 +685,8 @@ export class MongoUserRepository extends UserRepository {
       qualifications: p.qualifications,
       consultationSettings: p.consultationSettings,
       workingHours: p.workingHours,
+      slotDuration: p.slotDuration || 15,
+      timezone: p.timezone || 'Asia/Kolkata',
       rating: p.rating,
       reviewCount: p.reviewCount,
     }));
@@ -704,13 +704,20 @@ export class MongoUserRepository extends UserRepository {
 
   async getPublicDoctorById(id) {
     const DoctorModel = this._getModel("doctor");
-    const doctorProfile = await DoctorModel.findOne({ _id: id, verificationStatus: "approved" });
+    let doctorProfile = await DoctorModel.findOne({ _id: id, verificationStatus: "approved" });
+    if (!doctorProfile) {
+      const sharedUser = await SharedUser.findOne({ _id: id, role: "doctor" });
+      if (sharedUser && sharedUser.profileId) {
+        doctorProfile = await DoctorModel.findOne({ _id: sharedUser.profileId, verificationStatus: "approved" });
+      }
+    }
     if (!doctorProfile) return null;
 
-    const sharedUser = await SharedUser.findOne({ profileId: id, role: "doctor" });
+    const sharedUser = await SharedUser.findOne({ profileId: doctorProfile._id, role: "doctor" });
 
     return {
       id: doctorProfile._id,
+      _id: doctorProfile._id,
       firstName: doctorProfile.firstName,
       lastName: doctorProfile.lastName,
       name: `${doctorProfile.firstName} ${doctorProfile.lastName}`,
@@ -725,6 +732,8 @@ export class MongoUserRepository extends UserRepository {
       qualifications: doctorProfile.qualifications,
       consultationSettings: doctorProfile.consultationSettings,
       workingHours: doctorProfile.workingHours,
+      slotDuration: doctorProfile.slotDuration || 15,
+      timezone: doctorProfile.timezone || 'Asia/Kolkata',
       rating: doctorProfile.rating,
       reviewCount: doctorProfile.reviewCount,
     };
@@ -737,6 +746,8 @@ export class MongoUserRepository extends UserRepository {
     const p = sharedUser.profileId || {};
     return {
       id: sharedUser._id, // This matches what frontend expects for params.id
+      _id: p._id || sharedUser._id,
+      profileId: p._id || sharedUser.profileId,
       firstName: p.firstName,
       lastName: p.lastName,
       name: `${p.firstName || ''} ${p.lastName || ''}`.trim() || sharedUser.name,
@@ -751,6 +762,7 @@ export class MongoUserRepository extends UserRepository {
       qualifications: p.qualifications,
       consultationSettings: p.consultationSettings,
       workingHours: p.workingHours,
+      slotDuration: p.slotDuration || 15,
       rating: p.rating,
       reviewCount: p.reviewCount,
       medicalCertificateUrl: p.medicalCertificateUrl,

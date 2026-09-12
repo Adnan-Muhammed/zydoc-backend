@@ -1,4 +1,5 @@
 // src/application/usecases/doctor/UpdateDoctorProfile.js
+import { validateWorkingHours } from "../../../infrastructure/utils/scheduleValidator.js";
 
 export class UpdateDoctorProfile {
   constructor(userRepository) {
@@ -34,32 +35,66 @@ export class UpdateDoctorProfile {
 
     const { consultationSettings, workingHours: wh } = profileData;
     
-    if (!consultationSettings?.video?.enabled && !consultationSettings?.physical?.enabled) {
+    const isOnline = consultationSettings?.online?.enabled ?? consultationSettings?.video?.enabled ?? false;
+    const isOffline = consultationSettings?.offline?.enabled ?? consultationSettings?.physical?.enabled ?? false;
+
+    if (!isOnline && !isOffline) {
       throw new Error("You must enable at least one consultation type (Telehealth or In-Person).");
     }
 
-    if (consultationSettings?.video?.enabled) {
-      if (consultationSettings.video.fee === undefined || consultationSettings.video.fee === null || consultationSettings.video.fee === "") {
+    const daysList = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+    if (isOnline) {
+      const onlineFee = consultationSettings?.online?.fee ?? consultationSettings?.video?.fee;
+      if (onlineFee === undefined || onlineFee === null || onlineFee === "") {
         throw new Error("Telehealth fee is required.");
       }
-      const hasOnlineDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].some(day => wh?.online?.[day]?.active);
+      const hasOnlineDays = daysList.some(day => {
+        const dayConfig = wh?.online?.[day];
+        if (Array.isArray(dayConfig)) return dayConfig.length > 0;
+        return dayConfig?.active;
+      });
       if (!hasOnlineDays) {
         throw new Error("At least one available day is required for Telehealth.");
       }
     }
 
-    if (consultationSettings?.physical?.enabled) {
-      if (consultationSettings.physical.fee === undefined || consultationSettings.physical.fee === null || consultationSettings.physical.fee === "") {
+    if (isOffline) {
+      const offlineFee = consultationSettings?.offline?.fee ?? consultationSettings?.physical?.fee;
+      if (offlineFee === undefined || offlineFee === null || offlineFee === "") {
         throw new Error("In-Person fee is required.");
       }
-      if (!consultationSettings.physical.clinicName || !consultationSettings.physical.clinicAddress) {
+      const clinicName = consultationSettings?.offline?.clinicName ?? consultationSettings?.physical?.clinicName;
+      const clinicAddress = consultationSettings?.offline?.clinicAddress ?? consultationSettings?.physical?.clinicAddress;
+      if (!clinicName || !clinicAddress) {
         throw new Error("Clinic Title and Address are required for In-Person visits.");
       }
-      const hasOfflineDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].some(day => wh?.offline?.[day]?.active);
+      const hasOfflineDays = daysList.some(day => {
+        const dayConfig = wh?.offline?.[day];
+        if (Array.isArray(dayConfig)) return dayConfig.length > 0;
+        return dayConfig?.active;
+      });
       if (!hasOfflineDays) {
         throw new Error("At least one available day is required for In-Person consultation.");
       }
     }
+
+    // Validate shift durations and prevent overlapping shifts
+    validateWorkingHours(wh, Number(profileData.slotDuration) || 15);
+
+    // Standardize consultationSettings to online/offline format
+    const standardizedConsultationSettings = {
+      online: {
+        enabled: isOnline,
+        fee: Number(consultationSettings?.online?.fee ?? consultationSettings?.video?.fee ?? 0),
+      },
+      offline: {
+        enabled: isOffline,
+        fee: Number(consultationSettings?.offline?.fee ?? consultationSettings?.physical?.fee ?? 0),
+        clinicName: consultationSettings?.offline?.clinicName ?? consultationSettings?.physical?.clinicName ?? "",
+        clinicAddress: consultationSettings?.offline?.clinicAddress ?? consultationSettings?.physical?.clinicAddress ?? "",
+      }
+    };
 
     // ─────────────────────────────────────
     // Build update payload
@@ -82,6 +117,10 @@ export class UpdateDoctorProfile {
 
       yearsOfExperience: profileData.yearsOfExperience,
 
+      slotDuration: Number(profileData.slotDuration) || 15,
+
+      timezone: profileData.timezone || "Asia/Kolkata",
+
       expertiseTags: profileData.expertiseTags || [],
 
       languages: profileData.languages || [],
@@ -102,7 +141,7 @@ export class UpdateDoctorProfile {
       }),
 
       // Consultation
-      consultationSettings: profileData.consultationSettings,
+      consultationSettings: standardizedConsultationSettings,
 
       // Availability
       workingHours: profileData.workingHours,

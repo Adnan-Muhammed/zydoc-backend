@@ -1,5 +1,6 @@
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import { razorpayRefund, verifyRazorpaySignature } from './RazorpayService.js';
 
 class PaymentService {
   constructor() {
@@ -23,29 +24,14 @@ class PaymentService {
     }
   }
 
-  async refundPayment(paymentId, amount) {
-    try {
-      return await this.razorpay.payments.refund(paymentId, { amount });
-    } catch (error) {
-      console.error('Error refunding Razorpay payment:', error);
-      throw error;
-    }
+  async refundPayment(paymentId, amount, options = {}) {
+    return await razorpayRefund(paymentId, amount, options);
   }
 
   verifySignature(orderId, paymentId, signature) {
-    try {
-      const body = orderId + '|' + paymentId;
-      const expectedSignature = crypto
-        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-        .update(body.toString())
-        .digest('hex');
-      return expectedSignature === signature;
-    } catch (error) {
-      console.error('Error verifying Razorpay signature:', error);
-      return false;
-    }
+    return verifyRazorpaySignature(orderId, paymentId, signature);
   }
 }
 
+export { razorpayRefund, verifyRazorpaySignature };
 export default new PaymentService();
- 

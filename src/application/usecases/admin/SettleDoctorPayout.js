@@ -3,9 +3,12 @@ export class SettleDoctorPayout {
     this.transactionRepository = transactionRepository;
   }
 
-  async execute(transactionId) {
+  async execute(transactionId, adminId) {
     if (!transactionId) {
       throw new Error("Transaction ID is required");
+    }
+    if (!adminId) {
+      throw new Error("Admin ID is required for settlement");
     }
 
     const transaction = await this.transactionRepository.findById(transactionId);
@@ -21,10 +24,23 @@ export class SettleDoctorPayout {
       throw new Error(`Cannot settle transaction with status '${transaction.status}'. Consultation must be completed first.`);
     }
 
-    const updatedTransaction = await this.transactionRepository.updateTransactionStatus(
+    const doctor = transaction.doctorId;
+    if (!doctor || !doctor.bankDetails || !doctor.bankDetails.accountNumber || !doctor.bankDetails.ifscCode) {
+      const error = new Error("Cannot settle payout: Doctor has incomplete bank details.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const updatedTransaction = await this.transactionRepository.settleTransactionAtomic(
       transactionId,
-      'settled'
+      adminId
     );
+
+    if (!updatedTransaction) {
+      const error = new Error("Transaction already settled or modified concurrently.");
+      error.statusCode = 409;
+      throw error;
+    }
 
     return updatedTransaction;
   }

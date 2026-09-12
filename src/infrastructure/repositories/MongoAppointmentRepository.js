@@ -3,58 +3,153 @@ import { AppointmentRepository } from "../../domain/repositories/AppointmentRepo
 import Appointment from "../database/models/Appointment.js";
 import Doctor from "../database/models/DoctorProfile.js";
 import SharedUser from "../database/models/SharedUser.js";
+import { getUTCDayBounds, getSlotExactUTC, parseTimeStr } from "../utils/timeUtils.js";
+import { razorpayRefund } from "../services/RazorpayService.js";
+import Transaction from "../database/models/Transaction.js";
 
 export class MongoAppointmentRepository extends AppointmentRepository {
+    async findById(appointmentId) {
+        return await Appointment.findById(appointmentId);
+    }
+
     async lockSlot(lockData) {
         const currentTime = new Date();
-        const existing = await Appointment.findOne({
+        const { startOfDayUTC } = getUTCDayBounds(lockData.appointmentDate);
+        const slotDuration = Number(lockData.slotDuration) || 15;
+
+        const candidateParsed = parseTimeStr(lockData.appointmentTime);
+
+        // ── Phase 1: Overlap guard ───────────────────────────────────────────────
+        // Uses strict UTC Date inequalities on the pre-computed scheduledStartAt /
+        // scheduledEndAt fields — no string parsing, no timezone offset arithmetic.
+        // Two intervals [A_start, A_end) and [B_start, B_end) overlap when:
+        //   A_start < B_end  AND  A_end > B_start
+        // which maps directly to the two $lt / $gt conditions below.
+        const doctorTimezone = lockData.doctorTimezone || lockData.timezone || 'Asia/Kolkata';
+        const candidateStartUTC = lockData.scheduledStartAt 
+            ? new Date(lockData.scheduledStartAt) 
+            : getSlotExactUTC(lockData.appointmentDate, lockData.appointmentTime, doctorTimezone);
+        const candidateEndUTC = lockData.scheduledEndAt 
+            ? new Date(lockData.scheduledEndAt) 
+            : new Date(candidateStartUTC.getTime() + slotDuration * 60 * 1000);
+
+        const existingAppointments = await Appointment.find({
             doctorId: lockData.doctorId,
-            appointmentDate: lockData.appointmentDate,
-            appointmentTime: lockData.appointmentTime,
-            status: { $in: ['locked', 'scheduled', 'completed'] }
-        });
+            appointmentDate: startOfDayUTC,
+            $or: [
+                { status: { $in: ['scheduled', 'completed'] } },
+                { status: 'locked', lockExpiryTime: { $gt: currentTime } },
+            ],
+            // Overlap condition on stored UTC timestamps
+            scheduledStartAt: { $lt: candidateEndUTC },
+            scheduledEndAt:   { $gt: candidateStartUTC },
+        }).lean();
 
-        if (existing) {
+        for (const app of existingAppointments) {
+            // Same patient re-hitting a lock they already hold → idempotent return
             if (
-                existing.status === 'locked' &&
-                existing.lockedBy &&
-                existing.lockedBy.toString() === lockData.patientId.toString() &&
-                existing.lockExpiryTime > currentTime
+                app.status === 'locked' &&
+                app.lockedBy?.toString() === lockData.patientId.toString() &&
+                new Date(app.lockExpiryTime) > currentTime
             ) {
-                // If it's already locked by the same user and not expired, return it
-                return existing;
+                return await Appointment.findById(app._id); // return full Mongoose doc
             }
 
-            if (existing.status === 'locked' && existing.lockExpiryTime <= currentTime) {
-                // If it's an expired lock, delete it so we can create a new lock
-                await Appointment.deleteOne({ _id: existing._id });
-            } else {
-                // Locked by someone else or already booked
-                return null;
-            }
+            // Genuine conflict — occupied by another patient or already scheduled
+            return null;
         }
 
-        const appointment = new Appointment({
-            ...lockData,
-            status: 'locked',
-            lockedBy: lockData.patientId
-        });
+        // ── Phase 2: Atomic upsert ───────────────────────────────────────────────
+        // Mark any expired lock for this exact slot as 'expired' BEFORE the upsert
+        // so it no longer occupies the unique partial index slot.
+        // IMPORTANT: We use updateOne (not deleteOne) so the document — and its
+        // razorpayOrderId — is preserved. If Razorpay later delivers a webhook for
+        // this payment, VerifyPayment can still find the record and issue a refund.
+        await Appointment.updateOne(
+            {
+                doctorId: lockData.doctorId,
+                appointmentDate: startOfDayUTC,
+                appointmentTime: lockData.appointmentTime,
+                status: 'locked',
+                lockExpiryTime: { $lte: currentTime },
+            },
+            { $set: { status: 'expired' } }
+        );
 
-        return await appointment.save();
+        // Single atomic operation: insert a new locked document only if the unique
+        // partial index (doctorId + appointmentDate + appointmentTime) is free.
+        // If two users race here at the exact same millisecond, MongoDB's WiredTiger
+        // storage engine guarantees that only ONE upsert succeeds; the other raises
+        // an E11000 duplicate-key error, which we catch and translate to null — the
+        // existing contract LockSlot.js already handles.
+        try {
+            const newDoc = await Appointment.findOneAndUpdate(
+                // Filter: match only if NO active record exists for this slot
+                {
+                    doctorId: lockData.doctorId,
+                    appointmentDate: startOfDayUTC,
+                    appointmentTime: lockData.appointmentTime,
+                    // Exclude any record that is already active (belt-and-suspenders
+                    // guard complementing the unique index)
+                    status: { $nin: ['locked', 'scheduled', 'completed'] },
+                },
+                // Update: set all booking fields on the newly upserted document
+                {
+                    $setOnInsert: {
+                        ...lockData,
+                        appointmentDate: startOfDayUTC,
+                        status: 'locked',
+                        lockedBy: lockData.patientId,
+                    },
+                },
+                {
+                    upsert: true,
+                    // Return the document that was inserted/found.
+                    // `returnDocument: 'after'` is the Mongoose 7+ equivalent of
+                    // the deprecated `new: true`.
+                    returnDocument: 'after',
+                    // Projection: return all fields
+                    lean: false,
+                }
+            );
+            return newDoc;
+        } catch (err) {
+            // E11000 = duplicate key — a concurrent request won the race and already
+            // inserted a locked/scheduled/completed record for this slot.
+            if (err.code === 11000) {
+                return null;
+            }
+            throw err; // surface unexpected DB errors
+        }
     }
 
     async unlockSlot(payload, userId) {
+        // Patient-initiated explicit unlock: safe to hard-delete because the
+        // patient is abandoning the slot before any payment attempt.
         let query = { lockedBy: userId, status: 'locked' };
 
         if (typeof payload === 'string' || payload instanceof mongoose.Types.ObjectId) {
             query._id = payload;
         } else {
+            const { startOfDayUTC } = getUTCDayBounds(payload.date);
             query.doctorId = payload.doctorId;
-            query.appointmentDate = payload.date;
+            query.appointmentDate = startOfDayUTC;
             query.appointmentTime = payload.time;
         }
 
         return await Appointment.findOneAndDelete(query);
+    }
+
+    // Called exclusively by the cron job for TTL-expired locks.
+    // Marks the appointment 'expired' instead of deleting it so that
+    // VerifyPayment can still find the record by razorpayOrderId and
+    // trigger a refund if Razorpay captured money after the TTL elapsed.
+    async expireLockedSlot(appointmentId) {
+        return await Appointment.findOneAndUpdate(
+            { _id: appointmentId, status: 'locked' },
+            { $set: { status: 'expired' } },
+            { returnDocument: 'after' }
+        );
     }
 
     async extendLock(slotId, userId, additionalMinutes) {
@@ -82,14 +177,14 @@ export class MongoAppointmentRepository extends AppointmentRepository {
 
     async findByPatientIdWithDoctorDetails(patientId) {
         return await Appointment.find({ patientId })
-            .populate('doctorId', 'firstName lastName avatarUrl specialty consultationSettings')
+            .populate('doctorId', 'firstName lastName avatarUrl specialty consultationSettings slotDuration')
             .sort({ appointmentDate: -1 });
     }
 
     async findByDoctorIdWithPatientDetails(doctorId) {
         return await Appointment.find({ 
             doctorId,
-            status: 'scheduled'
+            status: { $in: ['scheduled', 'completed', 'no-show', 'cancelled', 'cancelled-by-doctor', 'disputed', 'refunded'] }
         })
             .populate({
                 path: 'patientId',
@@ -105,7 +200,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     async findDoctorHistoryWithPatientDetails(doctorId) {
         return await Appointment.find({
             doctorId,
-            status: { $in: ['completed', 'no-show'] }
+            status: { $in: ['completed', 'no-show', 'cancelled', 'cancelled-by-doctor', 'refunded'] }
         })
             .populate({
                 path: 'patientId',
@@ -118,50 +213,103 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             .sort({ appointmentDate: -1, appointmentTime: -1 });
     }
 
-    async lazyUpdateNoShows(doctorId) {
+    async lazyUpdateNoShows(filter = {}) {
         const now = new Date();
-        const fortyMinsInMs = 40 * 60 * 1000;
-        const pastThresholdTime = new Date(now.getTime() - fortyMinsInMs);
 
-        // Fetch Scheduled appointments to manually check time because time is stored as string 'HH:mm A'
-        const scheduledAppointments = await Appointment.find({
-            doctorId,
-            status: 'scheduled'
-        });
+        // Only process ONLINE/VIDEO appointments. Offline appointments are
+        // handled exclusively by the midnight OfflineNoShowCron to prevent
+        // premature status changes for in-person visits.
+        let query = {
+            status: 'scheduled',
+            consultationType: { $in: ['online', 'video'] },
+        };
+        if (typeof filter === 'string' || filter instanceof mongoose.Types.ObjectId) {
+            query.doctorId = filter;
+        } else if (filter && typeof filter === 'object') {
+            if (filter.doctorId) query.doctorId = filter.doctorId;
+            if (filter.patientId) query.patientId = filter.patientId;
+        }
 
-        const noShowIds = scheduledAppointments.filter(app => {
+        // Fetch Scheduled appointments matching the filter
+        const scheduledAppointments = await Appointment.find(query).populate('doctorId', 'slotDuration');
+
+        const expiredAppointments = scheduledAppointments.filter(app => {
             const dateStr = app.appointmentDate ? new Date(app.appointmentDate).toISOString().split('T')[0] : null;
             if (!dateStr || !app.appointmentTime) return false;
 
-            const [timeStr, modifier] = app.appointmentTime.trim().split(/\s+/);
-            let [h, m] = timeStr.split(':').map(Number);
-            if (isNaN(h) || isNaN(m)) return false;
+            const slotDurationMins = Number(app.doctorId?.slotDuration) || 15;
+            // Calculate exact UTC start and end times
+            const slotExactUTC = app.scheduledStartAt ? new Date(app.scheduledStartAt) : getSlotExactUTC(dateStr, app.appointmentTime, app.doctorTimezone || 'Asia/Kolkata');
+            const slotEndUTC = app.scheduledEndAt ? new Date(app.scheduledEndAt) : new Date(slotExactUTC.getTime() + slotDurationMins * 60 * 1000);
 
-            if (modifier) {
-                if (modifier.toUpperCase() === 'PM' && h < 12) h += 12;
-                if (modifier.toUpperCase() === 'AM' && h === 12) h = 0;
+            return now > slotEndUTC;
+        });
+
+        for (const app of expiredAppointments) {
+            // Task 2: Online Doctor No-Show Check
+            // If patient joined (patientJoinedAt is NOT null) BUT doctor did NOT join (doctorJoinedAt is null)
+            if (app.patientJoinedAt && !app.doctorJoinedAt) {
+                console.log(`[lazyUpdateNoShows] Doctor No-Show detected for online appointment ${app._id}. Marking as refund_pending...`);
+                app.status = 'refund_pending';
+                app.paymentStatus = 'paid'; // Keep as paid until admin approves
+                app.cancellationReason = 'Doctor failed to attend the scheduled consultation';
+                await app.save();
+                
+                // Do NOT trigger razorpay auto-refund or cancel transaction here.
+                // Leave it for Admin manual review under /refunds
+            } else if (!app.patientJoinedAt) {
+                // Patient failed to show up -> mark standard 'no-show'
+                app.status = 'no-show';
+                await app.save();
+                console.log(`[lazyUpdateNoShows] Patient missed appointment ${app._id}, marked as no-show.`);
             }
-
-            const apptDate = new Date(`${dateStr}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00.000Z`);
-            // Compare local/UTC matching depending on how frontend saves it.
-            // If date is stored at UTC midnight, and time is local, this requires exact timezone.
-            // Better to use 
-            //
-            // if it exists or reconstruct UTC correctly.
-            // Assuming the simple Date construction:
-            const [year, month, day] = dateStr.split('-').map(Number);
-            const slotLocal = new Date(year, month - 1, day, h, m, 0, 0);
-
-            return slotLocal < pastThresholdTime;
-        }).map(app => app._id);
-
-        if (noShowIds.length > 0) {
-            await Appointment.updateMany(
-                { _id: { $in: noShowIds } },
-                { $set: { status: 'no-show' } }
-            );
         }
     }
+
+    async findDisputedAppointments() {
+        // Fetch disputed and pending refund online cases
+        const disputedList = await Appointment.find({ status: { $in: ['disputed', 'refund_pending'] } })
+            .populate({
+                path: 'patientId',
+                select: 'email profileId roleModel googleName googleAvatarUrl',
+                populate: {
+                    path: 'profileId',
+                    select: 'firstName lastName avatarUrl phone dateOfBirth gender'
+                }
+            })
+            .populate('doctorId', 'firstName lastName avatarUrl specialty phone consultationSettings')
+            .sort({ disputedAt: -1, appointmentDate: -1 })
+            .lean(); // Lean for injection
+
+        // Cross-check for overlapping online calls
+        for (const app of disputedList) {
+            app.hasOnlineOverlapAlert = false;
+            app.overlappingOnlineAppointments = [];
+
+            if (['offline', 'physical'].includes(app.consultationType) && app.scheduledStartAt && app.scheduledEndAt) {
+                const overlaps = await Appointment.find({
+                    doctorId: app.doctorId._id,
+                    _id: { $ne: app._id },
+                    consultationType: { $in: ['online', 'video'] },
+                    // overlap condition: (StartA <= EndB) and (EndA >= StartB)
+                    // we use sessionStartedAt / sessionEndedAt for actual overlap
+                    sessionStartedAt: { $lte: app.scheduledEndAt },
+                    $or: [
+                        { sessionEndedAt: { $gte: app.scheduledStartAt } },
+                        { sessionEndedAt: { $exists: false } } // Still ongoing
+                    ]
+                }).lean();
+
+                if (overlaps && overlaps.length > 0) {
+                    app.hasOnlineOverlapAlert = true;
+                    app.overlappingOnlineAppointments = overlaps;
+                }
+            }
+        }
+
+        return disputedList;
+    }
+
 
     async findAllWithDetails() {
         return await Appointment.find({ status: { $ne: 'locked' } })
@@ -182,6 +330,9 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     }
 
     async findByOrderId(orderId) {
+        // Must match both 'locked' (concurrent webhook/frontend race) and
+        // 'expired' (payment captured after TTL) so VerifyPayment can always
+        // find the record and decide whether to confirm or refund.
         return await Appointment.findOne({ razorpayOrderId: orderId });
     }
 

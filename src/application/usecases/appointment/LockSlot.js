@@ -1,4 +1,10 @@
 import paymentService from "../../../infrastructure/services/PaymentService.js";
+import { 
+    getSlotExactUTC, 
+    getLateJoinGraceMinutes, 
+    getBookingCutoffMs, 
+    getRemainingSlotMinutes 
+} from "../../../infrastructure/utils/timeUtils.js";
 
 export class LockSlot {
     constructor(appointmentRepository) {
@@ -6,39 +12,22 @@ export class LockSlot {
     }
 
     async execute(lockData) {
-        if (!lockData.doctorId || !lockData.patientId || !lockData.appointmentDate || !lockData.appointmentTime || !lockData.patientType) {
-            throw new Error("Missing required fields for locking slot (including patientType)");
+        if (!lockData.doctorId || !lockData.patientId || !lockData.appointmentDate || !lockData.appointmentTime) {
+            throw new Error("Missing required fields for locking slot");
         }
 
-        const parseTimeStr = (tStr) => {
-            if (!tStr) return { h: 0, m: 0 };
-            const [time, modifier] = tStr.trim().split(/\s+/);
-            let [h, m] = time.split(':').map(Number);
-            if (isNaN(h)) h = 0;
-            if (isNaN(m)) m = 0;
-            if (modifier) {
-                if (modifier.toUpperCase() === 'PM' && h < 12) h += 12;
-                if (modifier.toUpperCase() === 'AM' && h === 12) h = 0;
-            }
-            return { h, m };
-        };
+        const slotDuration = Number(lockData.slotDuration) || 15;
+        const doctorTimezone = lockData.doctorTimezone || lockData.timezone || 'Asia/Kolkata';
+        const slotExactUTC = getSlotExactUTC(lockData.appointmentDate, lockData.appointmentTime, doctorTimezone);
+        const slotEndUTC = new Date(slotExactUTC.getTime() + slotDuration * 60000);
+        const now = new Date();
 
-        const { h, m } = parseTimeStr(lockData.appointmentTime);
-        let year, month, day;
-        if (lockData.appointmentDate.includes('T')) {
-            const dateObj = new Date(lockData.appointmentDate);
-            year = dateObj.getFullYear();
-            month = dateObj.getMonth() + 1;
-            day = dateObj.getDate();
-        } else {
-            [year, month, day] = lockData.appointmentDate.split('-').map(Number);
-        }
-        
-        const exactAppTime = new Date(year, month - 1, day, h, m, 0);
-        const slotEndTime = new Date(exactAppTime.getTime() + 30 * 60000);
-        
-        if (slotEndTime <= new Date()) {
-            const error = new Error("Cannot book a past time slot.");
+        // Dynamic Cutoff Validation:
+        // - Short slots (<= 15m): Must be booked at least 3m before start
+        // - Long slots (> 15m): Allowed in-progress up until late-join grace period
+        const bookingCutoffMs = getBookingCutoffMs(slotExactUTC, slotDuration);
+        if (now.getTime() >= bookingCutoffMs) {
+            const error = new Error("The booking window for this time slot has closed.");
             error.code = "SLOT_EXPIRED";
             throw error;
         }
@@ -46,36 +35,34 @@ export class LockSlot {
         // Normalize patientType
         const normalizePatientType = (pt) => {
             const cleaned = String(pt || '').toLowerCase().replace(/[\s\-_]/g, '');
-            return cleaned === 'followup' ? 'FOLLOW_UP' : 'NEW_CONSULTATION';
+            return cleaned === 'followup' ? 'FOLLOW_UP' : 'NEW';
         };
         const patientTypeConst = normalizePatientType(lockData.patientType);
 
-        // Calculate elapsed minutes
-        const currentTime = new Date();
-        const elapsedMinutes = (currentTime.getTime() - exactAppTime.getTime()) / (1000 * 60);
+        const isOngoing = now.getTime() > slotExactUTC.getTime();
+        const graceMinutes = getLateJoinGraceMinutes(slotDuration);
 
-        // Time-based Booking Cut-off
-        if (patientTypeConst === 'NEW_CONSULTATION' && elapsedMinutes > 10) {
-            const error = new Error("Booking time expired for this slot.");
-            error.code = "SLOT_EXPIRED";
-            throw error;
-        }
-        
-        if (patientTypeConst === 'FOLLOW_UP' && elapsedMinutes > 20) {
-            const error = new Error("Booking time expired for this slot.");
-            error.code = "SLOT_EXPIRED";
-            throw error;
-        }
+        // Standardize timestamps
+        lockData.patientType = patientTypeConst;
+        lockData.scheduledStartAt = slotExactUTC;
+        lockData.scheduledEndAt = slotEndUTC;
+        lockData.doctorTimezone = doctorTimezone;
+        lockData.patientTimezone = lockData.patientTimezone || null;
 
-        // Calculate and save late entry cutoff for JoinRoom
-        if (patientTypeConst === 'NEW_CONSULTATION') {
-            lockData.lateJoinCutoffAt = new Date(exactAppTime.getTime() + 15 * 60000);
+        // Proportional late join cutoff
+        lockData.lateJoinCutoffAt = new Date(slotExactUTC.getTime() + graceMinutes * 60 * 1000);
+
+        // In-progress metadata & dynamic payment lock window
+        lockData.isInProgressBooking = isOngoing;
+        if (isOngoing) {
+            lockData.effectiveBookedDuration = getRemainingSlotMinutes(slotExactUTC, slotDuration, now);
+            // Quick 3-minute payment lock for ongoing slots
+            lockData.lockExpiryTime = new Date(now.getTime() + 3 * 60 * 1000);
         } else {
-            lockData.lateJoinCutoffAt = new Date(exactAppTime.getTime() + 25 * 60000);
+            lockData.effectiveBookedDuration = slotDuration;
+            // Standard 5-minute payment lock
+            lockData.lockExpiryTime = new Date(now.getTime() + 5 * 60 * 1000);
         }
-
-        // Lock for 5 minutes
-        lockData.lockExpiryTime = new Date(currentTime.getTime() + 5 * 60 * 1000);
 
         const lockedAppointment = await this.appointmentRepository.lockSlot(lockData);
 
@@ -91,7 +78,6 @@ export class LockSlot {
         }
 
         // Generate Razorpay order for new lock
-        // Assuming fee is in INR, Razorpay expects amount in paise (multiply by 100)
         const amountInPaise = Math.round(lockData.fee * 100);
         const receiptId = `receipt_${Date.now()}_${lockedAppointment._id}`;
         
@@ -100,9 +86,7 @@ export class LockSlot {
             lockedAppointment.razorpayOrderId = order.id;
             await this.appointmentRepository.update(lockedAppointment._id, { razorpayOrderId: order.id });
         } catch (error) {
-            // If payment order creation fails, we might want to unlock the slot or log the error
             console.error("Failed to create Razorpay order during slot lock:", error);
-            // Optionally remove the lock if order creation fails, to allow retry
             await this.appointmentRepository.unlockSlot(lockedAppointment._id, lockData.patientId);
             throw new Error("Failed to initialize payment for the slot");
         }
@@ -110,3 +94,4 @@ export class LockSlot {
         return lockedAppointment;
     }
 }
+

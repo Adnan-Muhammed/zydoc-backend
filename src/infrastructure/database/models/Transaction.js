@@ -9,6 +9,8 @@ const transactionSchema = new mongoose.Schema({
     doctorAmount: { type: Number, required: true },
     paymentId: { type: String, required: true },
     status: { type: String, enum: ['pending', 'completed', 'failed', 'refunded', 'settled'], default: 'pending' },
+    settledAt: { type: Date },
+    settledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'SharedUser' }
 }, { timestamps: true });
 
 // Performance indexes

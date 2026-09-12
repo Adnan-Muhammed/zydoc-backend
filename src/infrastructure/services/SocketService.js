@@ -70,7 +70,7 @@ class SocketService {
   // console log commented 
   }
 
-  emitNewBookingNotification(doctorId, bookingDetails) {
+  async emitNewBookingNotification(doctorId, bookingDetails) {
     if (!this.io) {
       console.error("[SocketService] Socket.io is not initialized!");
       return;
@@ -83,24 +83,30 @@ class SocketService {
     };
 
     // 1. Notify the specific doctor if they are online
-    const doctorSockets = this.users.get(doctorId.toString());
+    let doctorSockets = this.users.get(doctorId.toString());
+
+    // If not found, doctorId might be the Doctor profile ID while sockets are registered with SharedUser._id
+    if (!doctorSockets || doctorSockets.size === 0) {
+      try {
+        const mongoose = (await import('mongoose')).default || await import('mongoose');
+        const SharedUser = mongoose.model('SharedUser');
+        const doctorUser = await SharedUser.findOne({ profileId: doctorId, role: 'doctor' });
+        if (doctorUser) {
+          doctorSockets = this.users.get(doctorUser._id.toString());
+        }
+      } catch (e) {
+        console.error("[SocketService] Error resolving doctor SharedUser in emitNewBookingNotification:", e);
+      }
+    }
+
     if (doctorSockets && doctorSockets.size > 0) {
       for (const socketId of doctorSockets) {
         this.io.to(socketId).emit("new_booking", payload);
       }
-      // console.log(`[SocketService] Emitted new_booking to Doctor ${doctorId} on ${doctorSockets.size} active tab(s)`);
-    // console log commented 
-    } else {
-
-      // console.log(`[SocketService] Doctor ${doctorId} is not online. Notification skipped.`);
-      // console log commented 
-      
     }
 
     // 2. Notify all connected admins
     this.io.to("admin_room").emit("new_booking", payload);
-    //console.log(`[SocketService] Emitted new_booking to admin_room`);
-  //console log commented 
   }
 
   emitToUser(userId, event, payload) {

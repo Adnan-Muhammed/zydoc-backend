@@ -44,6 +44,18 @@ export class MongoTransactionRepository extends TransactionRepository {
         );
     }
 
+    async settleTransactionAtomic(transactionId, adminId) {
+        return await Transaction.findOneAndUpdate(
+            { _id: transactionId, status: 'completed' },
+            { 
+                status: 'settled',
+                settledAt: new Date(),
+                settledBy: adminId
+            },
+            { returnDocument: 'after' }
+        );
+    }
+
     async updateStatus(id, status) {
         return await this.updateTransactionStatus(id, status);
     }

@@ -5,7 +5,9 @@ const appointmentSchema = new mongoose.Schema(
     patientId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "SharedUser",
-      required: true,
+      required: function () {
+        return !this.isManualBooking;
+      },
     },
 
     doctorId: {
@@ -26,7 +28,8 @@ const appointmentSchema = new mongoose.Schema(
 
     consultationType: {
       type: String,
-      enum: ["video", "physical", "online", "offline"],
+      enum: ["online", "offline", "video", "physical"],
+      default: "online",
       required: true,
     },
 
@@ -41,10 +44,15 @@ const appointmentSchema = new mongoose.Schema(
       enum: [
         "available",
         "locked",
+        "expired",      // lock TTL passed before payment was verified
         "scheduled",
         "completed",
         "no-show",
         "cancelled",
+        "cancelled-by-doctor",
+        "disputed",
+        "refund_pending",
+        "refunded",
       ],
       default: "scheduled",
     },
@@ -81,13 +89,77 @@ const appointmentSchema = new mongoose.Schema(
 
     paymentStatus: {
       type: String,
-      enum: ["pending", "paid", "refunded"],
+      enum: ["pending", "paid", "refunded", "direct"],
       default: "pending",
     },
 
     notes: {
       type: String,
       trim: true,
+    },
+
+    // Doctor private consultation notes (RBAC: restricted to doctor clinical console)
+    clinicalNotes: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // Structured prescriptions array saved upon call completion / finalization
+    prescriptions: [
+      {
+        id: { type: String },
+        medicine: { type: String, required: true },
+        dosage: { type: String, default: "" },
+        frequency: { type: String, default: "" },
+        duration: { type: String, default: "" },
+        instructions: { type: String, default: "" },
+        prescribedBy: { type: String, default: "" },
+        date: { type: String, default: "" },
+      },
+    ],
+
+    // Uploaded consultation files organized per session
+    consultationFiles: [
+      {
+        id: { type: String },
+        name: { type: String, required: true },
+        size: { type: String, default: "" },
+        type: { type: String, default: "" },
+        category: { type: String, default: "" },
+        uploadedBy: { type: String, default: "" },
+        timestamp: { type: String, default: "" },
+        url: { type: String, default: "" },
+      },
+    ],
+
+    // Manual Booking (Direct Walk-in / Call / WhatsApp by Doctor)
+    isManualBooking: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    bookingSource: {
+      type: String,
+      enum: ["platform", "manual"],
+      default: "platform",
+      index: true,
+    },
+
+    // True when the doctor created this appointment directly (walk-in / call)
+    // Distinct from isManualBooking to allow querying just doctor-initiated records
+    bookedByDoctor: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    manualPatientDetails: {
+      name: { type: String, trim: true },
+      opNumber: { type: String, trim: true },
+      phone: { type: String, trim: true },
+      notes: { type: String, trim: true },
     },
 
     // Socket.IO / consultation room
@@ -104,6 +176,16 @@ const appointmentSchema = new mongoose.Schema(
 
     scheduledEndAt: {
       type: Date,
+    },
+
+    doctorTimezone: {
+      type: String,
+      default: "Asia/Kolkata",
+    },
+
+    patientTimezone: {
+      type: String,
+      default: null,
     },
 
     // Individual join times
@@ -132,30 +214,20 @@ const appointmentSchema = new mongoose.Schema(
     },
 
 
-    // last allowed time to join the consultation
+    // Dynamic late join cutoff based on slot duration
     lateJoinCutoffAt: {
-      type: Date,   // its  depends on        patientType follow up 
+      type: Date,
     },
 
+    // In-progress booking indicators
+    isInProgressBooking: {
+      type: Boolean,
+      default: false,
+    },
 
-    //     Final timing structure
-    //   for eg: if the scheduledStartAt = 10:00 AM appointment :
-
-    // scheduledStartAt  → 10:00 AM
-    // scheduledEndAt    → 10:40 AM
-
-    // Join status:
-
-    // Before 9:57  consider    → EARLY   
-    // 9:57 - 10:05   consider  → ON_TIME
-    // After 10:05    consider  → LATE
-
-    // Late entry cutoff:
-
-    // NEW       → 10:15 AM
-    // FOLLOW_UP → 10:25 AM
-
-
+    effectiveBookedDuration: {
+      type: Number, // In minutes
+    },
 
     // Time when both doctor and patient are connected
     participantsConnectedAt: {
@@ -170,6 +242,75 @@ const appointmentSchema = new mongoose.Schema(
     sessionEndedAt: {
       type: Date,
     },
+
+    // ── Offline consultation verification ─────────────────────────────────
+    // 4-digit code generated at booking; patient shows it to the doctor in-person
+    offlineOTP: {
+      type: String,
+      sparse: true,
+    },
+
+    // Timestamp of when the doctor verified the OTP (audit trail)
+    offlineOTPVerifiedAt: {
+      type: Date,
+    },
+
+    // Set to true when doctor takes >1 min to join the next online room
+    // after their current offline appointment ends (performance metric)
+    doctorDelayed: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Cancellation, Dispute, and Refund tracking
+    cancellationReason: {
+      type: String,
+      trim: true,
+    },
+
+    cancelledAt: {
+      type: Date,
+    },
+
+    refundId: {
+      type: String,
+      sparse: true,
+    },
+
+    refundAmount: {
+      type: Number,
+    },
+
+    refundedAt: {
+      type: Date,
+    },
+
+    disputeReason: {
+      type: String,
+      trim: true,
+    },
+
+    disputedAt: {
+      type: Date,
+    },
+
+    disputeResolvedAt: {
+      type: Date,
+    },
+
+    disputeProofUrl: {
+      type: String,
+      trim: true,
+    },
+
+    noShowMarkedAt: {
+      type: Date,
+    },
+
+    adminRefundNotes: {
+      type: String,
+      trim: true,
+    },
   },
   {
     timestamps: true,
@@ -181,5 +322,33 @@ appointmentSchema.index({ patientId: 1 });
 appointmentSchema.index({ doctorId: 1 });
 appointmentSchema.index({ appointmentDate: 1 });
 appointmentSchema.index({ status: 1 });
+appointmentSchema.index({ consultationType: 1 });
+appointmentSchema.index({ consultationType: 1, status: 1, appointmentDate: 1 }); // for offline no-show cron
+appointmentSchema.index({ lockExpiryTime: 1 }, { sparse: true }); // for expired-lock cleanup queries
+
+/**
+ * ── Slot-Lock Race Condition Guard ──────────────────────────────────────────
+ * Unique partial index: enforces that only ONE active record can exist for a
+ * given (doctorId, appointmentDate, appointmentTime) combination at any time.
+ *
+ * - `partialFilterExpression` limits the guarantee to active statuses only.
+ *   Cancelled / refunded records are excluded so historical data never
+ *   blocks a future re-booking of the same slot.
+ * - Combined with the atomic `findOneAndUpdate + upsert` in lockSlot(), this
+ *   index acts as the true DB-level mutex: the second concurrent writer will
+ *   receive an E11000 duplicate-key error instead of silently succeeding.
+ * - In production, create this via the migration script to avoid index rebuild
+ *   downtime:  src/infrastructure/database/migrations/add_slot_lock_unique_index.js
+ */
+appointmentSchema.index(
+    { doctorId: 1, appointmentDate: 1, appointmentTime: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            status: { $in: ["locked", "scheduled", "completed"] },
+        },
+        name: "unique_active_slot_per_doctor",
+    }
+);
 
 export default mongoose.model("Appointment", appointmentSchema);

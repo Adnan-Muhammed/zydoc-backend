@@ -8,6 +8,8 @@ import morgan from "morgan";
 import helmet from "helmet";
 import http from "http";
 import { socketService } from "./src/infrastructure/services/SocketService.js";
+import { performanceTracker } from "./src/presentation/middleware/performanceMiddleware.js";
+import { systemMetrics } from "./src/infrastructure/monitoring/metrics.js";
 
 // Database
 import connectDB from "./src/infrastructure/database/connection.js";
@@ -28,6 +30,9 @@ import notificationRoutes from "./src/presentation/routes/notificationRoutes.js"
 
 // Initialize Cron Jobs
 import "./src/infrastructure/cron/SlotCron.js";
+import { startOfflineNoShowCron } from "./src/infrastructure/cron/OfflineNoShowCron.js";
+startOfflineNoShowCron();
+
 
 // Config
 // dotenv.config();
@@ -35,6 +40,7 @@ const app = express();
 const PORT = process.env.PORT; // Use a different port than existing backend
 
 // Middleware
+app.use(performanceTracker);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -91,9 +97,7 @@ app.use("/api/admin/auth", adminAuthRoutes);  // login for admin
 
 app.use("/api/admin/doctors", adminDoctorRoutes);
 app.use("/api/admin/patients", adminPatientRoutes);
-app.use("/api/doctor/", 
-  ((req, res, next) => { console.log(123456789), next() }),
-   doctorRoutes);   // doctor  profile completions
+app.use("/api/doctor/", doctorRoutes);   // doctor  profile completions
 
 
 
@@ -140,6 +144,7 @@ app.get("/", (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
+  systemMetrics.addLog(err.message || 'Unknown error occurred', 'error');
   res.status(500).json({
     success: false,
     message: "Internal Server Error",
