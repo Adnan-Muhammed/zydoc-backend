@@ -27,6 +27,7 @@ import doctorsPublicRoutes from "./src/presentation/routes/doctorsPublicRoutes.j
 import patientRoutes from "./src/presentation/routes/patientRoutes.js";
 import appointmentRoutes from "./src/presentation/routes/appointmentRoutes.js";
 import notificationRoutes from "./src/presentation/routes/notificationRoutes.js";
+import reviewRoutes from "./src/modules/reviews-ratings/routes/reviewRoutes.js";
 
 // Initialize Cron Jobs
 import "./src/infrastructure/cron/SlotCron.js";
@@ -105,6 +106,7 @@ app.use("/api/doctor/", doctorRoutes);   // doctor  profile completions
 app.use("/api/patient/", patientRoutes); // patient profile completions
 app.use("/api/appointments", appointmentRoutes); // appointments flow
 app.use("/api/notifications", notificationRoutes); // notification system
+app.use("/api/reviews", reviewRoutes); // doctor reviews and ratings system
 
 
 

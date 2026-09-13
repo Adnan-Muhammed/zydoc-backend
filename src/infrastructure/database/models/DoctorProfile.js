@@ -121,7 +121,7 @@ const doctorSchema = new mongoose.Schema(
     },
 
     // Aggregated reviews summary calculations cache
-    rating: { type: Number, default: 5.0 },
+    rating: { type: Number, default: 0 },
     reviewCount: { type: Number, default: 0 },
     fcmToken: { type: String },
 
