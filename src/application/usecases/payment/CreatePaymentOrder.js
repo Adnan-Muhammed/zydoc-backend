@@ -11,7 +11,7 @@ export class CreatePaymentOrder {
 
     // Helper to safely check status regardless of casing in DB
     const status = appointment.status?.toLowerCase();
-    
+     
     // 3. Exact authorization bypass
     const isAvailable = status === 'available';
     const isLockedByCurrentUser = status === 'locked' && appointment.lockedBy?.toString() === currentUserId.toString();
@@ -20,7 +20,7 @@ export class CreatePaymentOrder {
       // 4. If it fails the check, throw error
       throw new Error('Unfortunately, this slot was just locked by another user.');
     }
-
+ 
     const totalAmount = appointment.fee || 0;
     if (totalAmount <= 0) throw new Error('Invalid total amount for payment');
 

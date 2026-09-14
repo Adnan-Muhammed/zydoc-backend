@@ -84,7 +84,20 @@ export class JoinRoomUseCase {
       try {
         const appointment = await this.appointmentRepository.findById(appointmentId);
         if (appointment) {
-          if (['completed', 'no-show', 'cancelled'].includes(appointment.status)) {
+          // Block in-person / offline appointments from joining video call
+          const consultType = (appointment.consultationType || '').toLowerCase();
+          if (consultType === 'offline' || consultType === 'physical') {
+            const errMsg = { message: "This is an in-person consultation and does not support video calls." };
+            if (this.signalingGateway.socket?.id) {
+              this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+            }
+            if (userId) {
+              this.signalingGateway.emitToUser(userId, "call_error", errMsg);
+            }
+            return; // Block join
+          }
+
+          if (['completed', 'no-show', 'cancelled', 'cancelled-by-doctor', 'disputed', 'refunded'].includes(appointment.status)) {
             // Emit error directly to the socket trying to join
             if (this.signalingGateway.socket?.id) {
               this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", { message: "This consultation has already ended." });

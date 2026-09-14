@@ -98,6 +98,12 @@ const appointmentSchema = new mongoose.Schema(
       trim: true,
     },
 
+    // Link to external ConsultationRecord (decoupled medical record)
+    consultationRecordId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ConsultationRecord",
+    },
+
     // Doctor private consultation notes (RBAC: restricted to doctor clinical console)
     clinicalNotes: {
       type: String,

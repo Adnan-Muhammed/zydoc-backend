@@ -66,6 +66,12 @@ export class JoinWaitingRoomUseCase {
       const appointment = await this.appointmentRepository.findById(appointmentId);
       if (!appointment) return;
 
+      const consultType = (appointment.consultationType || '').toLowerCase();
+      if (consultType === 'offline' || consultType === 'physical') {
+        waitingRoomParticipants.get(waitingRoomKey)?.delete(userId);
+        return;
+      }
+
       const doctorId = appointment.doctorId?.toString();
       if (!doctorId) return;
 

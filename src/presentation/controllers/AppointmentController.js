@@ -1,4 +1,5 @@
 import Appointment from "../../infrastructure/database/models/Appointment.js";
+import ConsultationRecord from "../../infrastructure/database/models/ConsultationRecord.js";
 import Doctor from "../../infrastructure/database/models/DoctorProfile.js";
 import SharedUser from "../../infrastructure/database/models/SharedUser.js";
 import Patient from "../../infrastructure/database/models/PatientProfile.js";
@@ -786,6 +787,12 @@ export const cancelAppointment = async (req, res) => {
             appointment.status = 'cancelled-by-doctor';
             appointment.cancellationReason = req.body.reason || 'Cancelled by doctor';
             appointment.cancelledAt = new Date();
+            // Prune dead operational state
+            appointment.lockedBy = undefined;
+            appointment.lockExpiryTime = undefined;
+            appointment.roomId = undefined;
+            appointment.offlineOTP = undefined;
+            appointment.lateJoinCutoffAt = undefined;
             await appointment.save();
             return res.status(200).json({
                 success: true,
@@ -843,6 +850,13 @@ export const cancelAppointment = async (req, res) => {
             appointment.refundId = refundResult.id;
             appointment.refundAmount = appointment.fee;
         }
+
+        // Cleanly prune dead operational state while strictly retaining audit/financial records
+        appointment.lockedBy = undefined;
+        appointment.lockExpiryTime = undefined;
+        appointment.roomId = undefined;
+        appointment.offlineOTP = undefined;
+        appointment.lateJoinCutoffAt = undefined;
 
         await appointment.save();
 
@@ -1359,6 +1373,18 @@ export const getAppointmentById = async (req, res) => {
         }
 
         const appointmentObj = appointment.toObject();
+        // Fallback: If clinicalNotes / prescriptions / files are in ConsultationRecord, attach them
+        if (!appointmentObj.clinicalNotes || !appointmentObj.prescriptions?.length) {
+            const cr = await ConsultationRecord.findOne({ appointmentId: appointment._id })
+                .select('clinicalNotes prescriptions consultationFiles')
+                .lean();
+            if (cr) {
+                if (!appointmentObj.clinicalNotes) appointmentObj.clinicalNotes = cr.clinicalNotes || '';
+                if (!appointmentObj.prescriptions?.length) appointmentObj.prescriptions = cr.prescriptions || [];
+                if (!appointmentObj.consultationFiles?.length) appointmentObj.consultationFiles = cr.consultationFiles || [];
+            }
+        }
+
         // RBAC Isolation: Patients cannot view doctor private clinical observation notes
         if (req.user?.role !== 'doctor' && req.user?.role !== 'admin') {
             delete appointmentObj.clinicalNotes;
@@ -1412,6 +1438,12 @@ export const getClinicalContext = async (req, res) => {
             emergencyContact: patientProfile.emergencyContact || null,
         };
 
+        // Fetch current appointment's ConsultationRecord (with fallback to embedded appointment fields)
+        const currentRecord = await ConsultationRecord.findOne({ appointmentId: appointment._id }).lean();
+        const currentClinicalNotes = currentRecord?.clinicalNotes ?? appointment.clinicalNotes ?? '';
+        const currentPrescriptions = currentRecord?.prescriptions ?? appointment.prescriptions ?? [];
+        const currentFiles = currentRecord?.consultationFiles ?? appointment.consultationFiles ?? [];
+
         // Fetch past consultation records & clinical notes for longitudinal context
         let pastConsultations = [];
         if (appointment.patientId?._id) {
@@ -1425,24 +1457,31 @@ export const getClinicalContext = async (req, res) => {
             .limit(10)
             .lean();
 
-            pastConsultations = pastAppts.map((past) => ({
-                appointmentId: past._id,
-                date: past.appointmentDate,
-                time: past.appointmentTime,
-                doctorName: past.doctorId ? `Dr. ${past.doctorId.firstName || ''} ${past.doctorId.lastName || ''}`.trim() : 'Doctor',
-                specialty: past.doctorId?.specialty || 'General Practice',
-                clinicalNotes: past.clinicalNotes || '',
-                prescriptions: past.prescriptions || [],
-            }));
+            const pastApptIds = pastAppts.map((p) => p._id);
+            const pastRecords = await ConsultationRecord.find({ appointmentId: { $in: pastApptIds } }).lean();
+            const pastRecordMap = new Map(pastRecords.map((r) => [r.appointmentId.toString(), r]));
+
+            pastConsultations = pastAppts.map((past) => {
+                const r = pastRecordMap.get(past._id.toString());
+                return {
+                    appointmentId: past._id,
+                    date: past.appointmentDate,
+                    time: past.appointmentTime,
+                    doctorName: past.doctorId ? `Dr. ${past.doctorId.firstName || ''} ${past.doctorId.lastName || ''}`.trim() : 'Doctor',
+                    specialty: past.doctorId?.specialty || 'General Practice',
+                    clinicalNotes: r?.clinicalNotes ?? past.clinicalNotes ?? '',
+                    prescriptions: r?.prescriptions ?? past.prescriptions ?? [],
+                };
+            });
         }
 
         res.status(200).json({
             success: true,
             patientInfo,
             pastConsultations,
-            currentNotes: appointment.clinicalNotes || '',
-            prescriptions: appointment.prescriptions || [],
-            files: appointment.consultationFiles || [],
+            currentNotes: currentClinicalNotes,
+            prescriptions: currentPrescriptions,
+            files: currentFiles,
         });
     } catch (error) {
         console.error("Get Clinical Context Error:", error);
@@ -1463,6 +1502,7 @@ export const saveClinicalNotes = async (req, res) => {
             return res.status(403).json({ success: false, message: "Access denied. Doctor privileges required." });
         }
 
+        // Dual-write: update Appointment for complete backward compatibility
         const appointment = await Appointment.findByIdAndUpdate(
             id,
             { $set: { clinicalNotes: notes || '' } },
@@ -1471,6 +1511,24 @@ export const saveClinicalNotes = async (req, res) => {
 
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });
+        }
+
+        // Upsert into ConsultationRecord
+        const consultationRecord = await ConsultationRecord.findOneAndUpdate(
+            { appointmentId: appointment._id },
+            {
+                $set: {
+                    clinicalNotes: notes || '',
+                    doctorId: appointment.doctorId,
+                    patientId: appointment.patientId,
+                },
+            },
+            { upsert: true, new: true }
+        );
+
+        if (consultationRecord && (!appointment.consultationRecordId || !appointment.consultationRecordId.equals(consultationRecord._id))) {
+            appointment.consultationRecordId = consultationRecord._id;
+            await appointment.save();
         }
 
         res.status(200).json({ success: true, message: "Clinical notes saved", clinicalNotes: appointment.clinicalNotes });
@@ -1497,6 +1555,7 @@ export const savePrescriptions = async (req, res) => {
             return res.status(400).json({ success: false, message: "Prescriptions must be an array." });
         }
 
+        // Dual-write: update Appointment for complete backward compatibility
         const appointment = await Appointment.findByIdAndUpdate(
             id,
             { $set: { prescriptions } },
@@ -1505,6 +1564,24 @@ export const savePrescriptions = async (req, res) => {
 
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });
+        }
+
+        // Upsert into ConsultationRecord
+        const consultationRecord = await ConsultationRecord.findOneAndUpdate(
+            { appointmentId: appointment._id },
+            {
+                $set: {
+                    prescriptions,
+                    doctorId: appointment.doctorId,
+                    patientId: appointment.patientId,
+                },
+            },
+            { upsert: true, new: true }
+        );
+
+        if (consultationRecord && (!appointment.consultationRecordId || !appointment.consultationRecordId.equals(consultationRecord._id))) {
+            appointment.consultationRecordId = consultationRecord._id;
+            await appointment.save();
         }
 
         res.status(200).json({
@@ -1546,6 +1623,7 @@ export const uploadConsultationFile = async (req, res) => {
             url: `/uploads/${file.filename}`,
         };
 
+        // Dual-write: update Appointment for complete backward compatibility
         const appointment = await Appointment.findByIdAndUpdate(
             id,
             { $push: { consultationFiles: newFileItem } },
@@ -1554,6 +1632,24 @@ export const uploadConsultationFile = async (req, res) => {
 
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });
+        }
+
+        // Upsert into ConsultationRecord
+        const consultationRecord = await ConsultationRecord.findOneAndUpdate(
+            { appointmentId: appointment._id },
+            {
+                $push: { consultationFiles: newFileItem },
+                $setOnInsert: {
+                    doctorId: appointment.doctorId,
+                    patientId: appointment.patientId,
+                },
+            },
+            { upsert: true, new: true }
+        );
+
+        if (consultationRecord && (!appointment.consultationRecordId || !appointment.consultationRecordId.equals(consultationRecord._id))) {
+            appointment.consultationRecordId = consultationRecord._id;
+            await appointment.save();
         }
 
         res.status(201).json({ success: true, file: newFileItem });

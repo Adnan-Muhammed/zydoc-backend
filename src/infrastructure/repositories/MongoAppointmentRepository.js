@@ -76,46 +76,24 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             { $set: { status: 'expired' } }
         );
 
-        // Single atomic operation: insert a new locked document only if the unique
-        // partial index (doctorId + appointmentDate + appointmentTime) is free.
-        // If two users race here at the exact same millisecond, MongoDB's WiredTiger
-        // storage engine guarantees that only ONE upsert succeeds; the other raises
-        // an E11000 duplicate-key error, which we catch and translate to null — the
-        // existing contract LockSlot.js already handles.
+        // Single atomic operation: insert a new locked document.
+        // Protected by the unique partial index `unique_active_slot_per_doctor`
+        // (doctorId + appointmentDate + appointmentTime) on active statuses ['locked', 'scheduled', 'completed'].
+        // Cancelled / expired records are excluded from the index, allowing vacated slots to be re-booked.
+        // If two users race at the exact same millisecond, MongoDB's WiredTiger engine guarantees
+        // that only ONE create succeeds; the second raises an E11000 duplicate-key error, which we catch
+        // and translate to null — which LockSlot.js handles by alerting the user that the slot was locked.
         try {
-            const newDoc = await Appointment.findOneAndUpdate(
-                // Filter: match only if NO active record exists for this slot
-                {
-                    doctorId: lockData.doctorId,
-                    appointmentDate: startOfDayUTC,
-                    appointmentTime: lockData.appointmentTime,
-                    // Exclude any record that is already active (belt-and-suspenders
-                    // guard complementing the unique index)
-                    status: { $nin: ['locked', 'scheduled', 'completed'] },
-                },
-                // Update: set all booking fields on the newly upserted document
-                {
-                    $setOnInsert: {
-                        ...lockData,
-                        appointmentDate: startOfDayUTC,
-                        status: 'locked',
-                        lockedBy: lockData.patientId,
-                    },
-                },
-                {
-                    upsert: true,
-                    // Return the document that was inserted/found.
-                    // `returnDocument: 'after'` is the Mongoose 7+ equivalent of
-                    // the deprecated `new: true`.
-                    returnDocument: 'after',
-                    // Projection: return all fields
-                    lean: false,
-                }
-            );
+            const newDoc = await Appointment.create({
+                ...lockData,
+                appointmentDate: startOfDayUTC,
+                status: 'locked',
+                lockedBy: lockData.patientId,
+            });
             return newDoc;
         } catch (err) {
             // E11000 = duplicate key — a concurrent request won the race and already
-            // inserted a locked/scheduled/completed record for this slot.
+            // inserted an active (locked/scheduled/completed) record for this slot.
             if (err.code === 11000) {
                 return null;
             }
