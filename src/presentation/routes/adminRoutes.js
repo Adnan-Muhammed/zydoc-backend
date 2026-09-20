@@ -116,12 +116,16 @@ router.post('/', (req, res) => adminUserController.createUser(req, res));
 router.put('/:id', (req, res) => adminUserController.updateUser(req, res));
 router.put('/soft-delete/:id', (req, res) => adminUserController.softDeleteUser(req, res));
 router.put('/restore/:id', (req, res) => adminUserController.restoreUser(req, res));
-router.put('/doctors/:id/documents/:docType/status', (req, res) => adminUserController.updateDocumentStatus(req, res));
-router.put('/doctors/:id/approve', (req, res) => adminUserController.approveDoctor(req, res));
-router.put('/doctors/:id/qualifications/:qualId/status', (req, res) => adminUserController.updateQualificationStatus(req, res));
-router.put('/doctors/:id/reject', (req, res) => adminUserController.rejectDoctor(req, res));
-router.put('/doctors/:id/suspend', (req, res) => adminUserController.suspendDoctor(req, res));
-router.put('/doctors/:id/unsuspend', (req, res) => adminUserController.unsuspendDoctor(req, res));
-router.delete('/:id', (req, res) => adminUserController.deleteUser(req, res));
+
+// User deletion route
+router.delete('/:id', async (req, res) => {
+    try {
+        const adminId = req.user?.id || req.user?._id;
+        await deleteUserUseCase.execute({ id: req.params.id, adminId, hardDelete: true });
+        res.json({ success: true, message: 'User deleted successfully' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
 
 export default router;

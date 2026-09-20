@@ -36,10 +36,12 @@ const userController = new UserController(
     updateUserProfileUseCase
 );
 
+import { preventSuspendedDoctorAction } from '../middleware/preventSuspendedDoctorMiddleware.js';
+
 // Routes
 router.use(protect); // Protect all routes
 
 router.get('/profile', (req, res) => userController.getProfile(req, res));
-router.put('/profile', (req, res) => userController.updateProfile(req, res));
+router.put('/profile', preventSuspendedDoctorAction, (req, res) => userController.updateProfile(req, res));
 
 export default router;

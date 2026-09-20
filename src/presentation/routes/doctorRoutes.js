@@ -15,8 +15,13 @@ import { UpdateBankDetails } from "../../application/usecases/doctor/UpdateBankD
 
 import { DoctorController } from "../controllers/DoctorController.js";
 import { JwtService } from '../../infrastructure/security/JwtService.js';
+import { preventSuspendedDoctorAction } from "../middleware/preventSuspendedDoctorMiddleware.js";
 
 const router = express.Router();
+
+// Enforce authentication and block mutating actions if doctor is suspended
+router.use(protect);
+router.use(preventSuspendedDoctorAction);
 
 const userRepository = new MongoUserRepository();
 const transactionRepository = new MongoTransactionRepository();
@@ -69,5 +74,12 @@ router.patch("/bank-details", protect, (req, res) => doctorController.updateBank
 // Called automatically by the frontend after notification permission is granted.
 // Stores the device's FCM token on the doctor's profile for targeted push notifications.
 router.patch("/fcm-token", protect, (req, res) => doctorController.saveFcmToken(req, res));
+
+// ── Doctor "My Patients" Historical Directory & Clinical Records ─────────────
+import { DoctorPatientsController } from "../controllers/DoctorPatientsController.js";
+const doctorPatientsController = new DoctorPatientsController();
+
+router.get("/my-patients", (req, res) => doctorPatientsController.getMyPatients(req, res));
+router.get("/my-patients/:patientId/history", (req, res) => doctorPatientsController.getPatientHistory(req, res));
 
 export default router;  

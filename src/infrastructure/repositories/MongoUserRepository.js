@@ -621,7 +621,17 @@ export class MongoUserRepository extends UserRepository {
     const { search, specialty, consultationType, minRating } = filters;
     const { page = 1, limit = 10, sortBy = "rating", sortOrder = "desc" } = options;
 
-    const query = { verificationStatus: "approved" };
+    // Strictly fetch only doctors whose account is active and verified
+    const activeDoctorUsers = await SharedUser.find(
+      { role: "doctor", accountStatus: "active" },
+      { profileId: 1 }
+    ).lean();
+    const activeProfileIds = activeDoctorUsers.map((u) => u.profileId);
+
+    const query = {
+      _id: { $in: activeProfileIds },
+      verificationStatus: "approved",
+    };
 
     if (specialty) {
       query.specialty = { $regex: new RegExp(specialty, "i") };
@@ -740,6 +750,7 @@ export class MongoUserRepository extends UserRepository {
     if (!doctorProfile) return null;
 
     const sharedUser = await SharedUser.findOne({ profileId: doctorProfile._id, role: "doctor" });
+    if (!sharedUser || sharedUser.accountStatus !== "active") return null;
 
     return {
       id: doctorProfile._id,
@@ -791,6 +802,7 @@ export class MongoUserRepository extends UserRepository {
       slotDuration: p.slotDuration || 15,
       timezone: p.timezone || "Asia/Kolkata",
       rejectionReason: p.rejectionReason || "",
+      suspensionReason: p.suspensionReason || "",
       verifiedAt: p.verifiedAt,
       verifiedBy: p.verifiedBy,
       rating: p.rating,
@@ -923,6 +935,9 @@ export class MongoUserRepository extends UserRepository {
       ["pending", "approved", "rejected"].includes(filters.verificationStatus)
     ) {
       profileFilter.verificationStatus = filters.verificationStatus;
+    } else {
+      // By default, exclude pending applications from the Admin Doctor List
+      profileFilter.verificationStatus = { $ne: "pending" };
     }
 
     if (filters.specialty) {
@@ -1214,6 +1229,313 @@ export class MongoUserRepository extends UserRepository {
         rejectionReason: doctorProfile.rejectionReason,
         verifiedAt: doctorProfile.verifiedAt,
       },
+    };
+  }
+
+  /**
+   * Updates verification status for a specific doctor document (medicalCertificate or governmentId).
+   * Guard: Cannot alter document status if doctor is already approved.
+   */
+  async updateDoctorDocumentStatus({ doctorUserId, docType, status, reason = "", adminUserId }) {
+    const sharedUser = await SharedUser.findById(doctorUserId);
+    if (!sharedUser || sharedUser.role !== "doctor") {
+      throw new Error("Doctor not found");
+    }
+
+    const doctorProfile = await Doctor.findById(sharedUser.profileId);
+    if (!doctorProfile) {
+      throw new Error("Doctor profile not found");
+    }
+
+    if (doctorProfile.verificationStatus === "approved") {
+      throw new Error("Cannot modify document status for an already approved doctor.");
+    }
+
+    if (docType === "medicalCertificate") {
+      doctorProfile.medicalCertificateStatus = status;
+      doctorProfile.medicalCertificateRejectionReason = status === "rejected" ? (reason || "") : "";
+    } else if (docType === "governmentId") {
+      doctorProfile.governmentIdStatus = status;
+      doctorProfile.governmentIdRejectionReason = status === "rejected" ? (reason || "") : "";
+    } else {
+      throw new Error(`Invalid document type: ${docType}. Must be 'medicalCertificate' or 'governmentId'`);
+    }
+
+    await doctorProfile.save();
+
+    return {
+      success: true,
+      docType,
+      status,
+      reason: status === "rejected" ? (reason || "") : "",
+      doctorProfile,
+    };
+  }
+
+  /**
+   * Updates verification status for a specific qualification degree certificate.
+   * Guard: Cannot alter status if doctor is already approved.
+   */
+  async updateDoctorQualificationStatus({ doctorUserId, qualId, status, reason = "", adminUserId }) {
+    const sharedUser = await SharedUser.findById(doctorUserId);
+    if (!sharedUser || sharedUser.role !== "doctor") {
+      throw new Error("Doctor not found");
+    }
+
+    const doctorProfile = await Doctor.findById(sharedUser.profileId);
+    if (!doctorProfile) {
+      throw new Error("Doctor profile not found");
+    }
+
+    if (doctorProfile.verificationStatus === "approved") {
+      throw new Error("Cannot modify qualification status for an already approved doctor.");
+    }
+
+    if (!Array.isArray(doctorProfile.qualifications) || doctorProfile.qualifications.length === 0) {
+      throw new Error("Doctor has no qualifications on file.");
+    }
+
+    const qual = doctorProfile.qualifications.find((q, idx) => q.id === qualId || String(idx) === qualId);
+    if (!qual) {
+      throw new Error(`Qualification with ID ${qualId} not found.`);
+    }
+
+    qual.certificateStatus = status;
+    qual.rejectionReason = status === "rejected" ? (reason || "") : "";
+
+    await doctorProfile.save();
+
+    return {
+      success: true,
+      qualId,
+      status,
+      reason: status === "rejected" ? (reason || "") : "",
+      qualification: qual,
+    };
+  }
+
+  /**
+   * Suspends an approved doctor's account with a mandatory reason.
+   * - Sets accountStatus = 'suspended' and stores suspensionReason.
+   * - Detects and protects any currently active online/offline consultation.
+   * - Auto-cancels future appointments (status = 'cancelled_by_admin').
+   * - Credits 100% wallet refund to affected patients for paid platform bookings.
+   * - Updates transaction records to 'refunded'.
+   * - Releases active slot locks.
+   * - Creates an administrative audit log.
+   */
+  async suspendDoctor({ doctorUserId, reason, adminUserId }) {
+    let sharedUser = await SharedUser.findById(doctorUserId);
+    if (!sharedUser) {
+      sharedUser = await SharedUser.findOne({ profileId: doctorUserId, role: "doctor" });
+    }
+    if (!sharedUser || sharedUser.role !== "doctor") {
+      throw new Error("Doctor not found");
+    }
+
+    const doctorProfile = await Doctor.findById(sharedUser.profileId);
+    if (!doctorProfile) {
+      throw new Error("Doctor profile not found");
+    }
+
+    // 1. Mark doctor account as suspended and record reason
+    sharedUser.accountStatus = "suspended";
+    await sharedUser.save();
+
+    doctorProfile.suspensionReason = reason || "";
+    await doctorProfile.save();
+
+    const doctorProfileId = doctorProfile._id;
+    let activeOngoingAppointmentId = null;
+
+    // 2. Identify currently active / ongoing consultations
+    // Graceful Exit: Active consultations must NOT be terminated abruptly.
+    try {
+      const potentiallyActive = await Appointment.find({
+        doctorId: doctorProfileId,
+        status: { $in: ["scheduled", "in_progress"] },
+      });
+
+      for (const app of potentiallyActive) {
+        const isOnlineActive =
+          app.status === "in_progress" ||
+          (app.sessionStartedAt && !app.sessionEndedAt) ||
+          (app.participantsConnectedAt && !app.sessionEndedAt);
+
+        const isOfflineActive =
+          ["offline", "physical"].includes(app.consultationType) &&
+          (app.status === "in_progress" ||
+            (app.offlineOTPVerifiedAt && !app.sessionEndedAt));
+
+        if (isOnlineActive || isOfflineActive) {
+          activeOngoingAppointmentId = app._id.toString();
+          console.log(`[suspendDoctor] Preserving active consultation: ${activeOngoingAppointmentId}`);
+          break; // Preserve the current active session
+        }
+      }
+    } catch (activeErr) {
+      console.error("[suspendDoctor] Error detecting active consultations:", activeErr.message);
+    }
+
+    // 3. Auto-Cancel Future Appointments & Issue 100% Wallet Refunds
+    let cancelledAppointmentsCount = 0;
+    let refundedPatientsCount = 0;
+    let totalRefundedAmount = 0;
+
+    try {
+      const futureAppointmentsQuery = {
+        doctorId: doctorProfileId,
+        status: { $in: ["scheduled", "locked"] },
+      };
+      if (activeOngoingAppointmentId) {
+        futureAppointmentsQuery._id = { $ne: activeOngoingAppointmentId };
+      }
+
+      const futureAppointments = await Appointment.find(futureAppointmentsQuery);
+
+      const { MongoWalletRepository } = await import("./MongoWalletRepository.js");
+      const walletRepo = new MongoWalletRepository();
+      const Transaction = (await import("../database/models/Transaction.js")).default;
+      const Notification = (await import("../database/models/Notification.js")).default;
+
+      for (const app of futureAppointments) {
+        if (app.status === "locked") {
+          // Release locked slot
+          app.status = "expired";
+          app.lockedBy = undefined;
+          app.lockExpiryTime = undefined;
+          await app.save();
+          continue;
+        }
+
+        if (app.isManualBooking || app.bookedByDoctor) {
+          // Manual doctor offline booking: no platform payment or wallet refund
+          app.status = "cancelled_by_admin";
+          app.cancellationReason = `Doctor account suspended: ${reason}`;
+          app.cancelledAt = new Date();
+          app.lockedBy = undefined;
+          app.lockExpiryTime = undefined;
+          app.roomId = undefined;
+          app.offlineOTP = undefined;
+          app.lateJoinCutoffAt = undefined;
+          await app.save();
+          cancelledAppointmentsCount++;
+          continue;
+        }
+
+        // Platform Paid Appointment: issue 100% wallet refund
+        const refundAmount = Number(app.feeBreakdown?.totalFee || app.fee || 0);
+
+        if (refundAmount > 0 && app.patientId) {
+          try {
+            await walletRepo.creditWallet(
+              app.patientId,
+              refundAmount,
+              "DOCTOR_SUSPENDED",
+              `100% refund for appointment cancellation due to doctor account suspension (Dr. ${doctorProfile.firstName} ${doctorProfile.lastName})`,
+              app._id
+            );
+            totalRefundedAmount += refundAmount;
+            refundedPatientsCount++;
+          } catch (walletErr) {
+            console.error(`[suspendDoctor] Failed to refund wallet for appointment ${app._id}:`, walletErr.message);
+          }
+
+          // Mark platform transaction as refunded
+          try {
+            await Transaction.findOneAndUpdate(
+              { appointmentId: app._id },
+              { $set: { status: "refunded" } }
+            );
+          } catch (txErr) {
+            console.error(`[suspendDoctor] Failed to update transaction for ${app._id}:`, txErr.message);
+          }
+        }
+
+        // Update appointment status to cancelled_by_admin
+        app.status = "cancelled_by_admin";
+        app.paymentStatus = "refunded";
+        app.cancellationReason = `Doctor account suspended: ${reason}`;
+        app.cancelledAt = new Date();
+        app.refundedAt = new Date();
+        app.refundAmount = refundAmount;
+        app.lockedBy = undefined;
+        app.lockExpiryTime = undefined;
+        app.roomId = undefined;
+        app.offlineOTP = undefined;
+        app.lateJoinCutoffAt = undefined;
+        await app.save();
+        cancelledAppointmentsCount++;
+
+        // Send patient notification
+        try {
+          if (app.patientId) {
+            const dateStr = app.appointmentDate
+              ? new Date(app.appointmentDate).toDateString()
+              : "";
+            await Notification.create({
+              recipientId: app.patientId,
+              recipientModel: "User",
+              type: "APPOINTMENT_CANCELLED",
+              title: "Appointment Cancelled & 100% Refunded",
+              message: `Your appointment with Dr. ${doctorProfile.firstName} ${doctorProfile.lastName} on ${dateStr} at ${app.appointmentTime} has been cancelled due to doctor account suspension. A full refund of ₹${refundAmount} has been credited to your wallet.`,
+              referenceId: app._id,
+            });
+          }
+        } catch (notifErr) {
+          console.error(`[suspendDoctor] Notification failed for patient ${app.patientId}:`, notifErr.message);
+        }
+      }
+    } catch (cancelErr) {
+      console.error("[suspendDoctor] Error processing upcoming appointment cancellations:", cancelErr.message);
+    }
+
+    // 4. Log the action on AdminProfile
+    try {
+      if (adminUserId) {
+        const adminUser = await SharedUser.findById(adminUserId);
+        if (adminUser?.profileId) {
+          await Admin.findByIdAndUpdate(adminUser.profileId, {
+            $push: {
+              adminActivityLog: {
+                $each: [
+                  {
+                    action: "DOCTOR_SUSPENDED",
+                    targetId: doctorProfile._id,
+                    targetModel: "Doctor",
+                    note: `Doctor ${doctorProfile.firstName} ${doctorProfile.lastName} suspended: ${reason}. Cancelled: ${cancelledAppointmentsCount}, Refunded: ₹${totalRefundedAmount}`,
+                    performedAt: new Date(),
+                  },
+                ],
+                $slice: -200,
+              },
+            },
+          });
+        }
+      }
+    } catch (logError) {
+      console.error("[suspendDoctor] Audit log write failed:", logError.message);
+    }
+
+    return {
+      success: true,
+      message: `Dr. ${doctorProfile.firstName} ${doctorProfile.lastName} account has been suspended.`,
+      doctor: {
+        userId: sharedUser._id,
+        email: sharedUser.email,
+        accountStatus: sharedUser.accountStatus,
+      },
+      profile: {
+        firstName: doctorProfile.firstName,
+        lastName: doctorProfile.lastName,
+        verificationStatus: doctorProfile.verificationStatus,
+        suspensionReason: doctorProfile.suspensionReason,
+      },
+      activeSessionPreserved: !!activeOngoingAppointmentId,
+      activeAppointmentId: activeOngoingAppointmentId,
+      cancelledAppointmentsCount,
+      refundedPatientsCount,
+      totalRefundedAmount,
     };
   }
 
@@ -1579,6 +1901,16 @@ export class MongoUserRepository extends UserRepository {
     // 3. Toggle accountStatus
     const previousStatus = sharedUser.accountStatus || "active";
     const newStatus = previousStatus === "active" ? "suspended" : "active";
+
+    // If suspending a doctor, delegate to suspendDoctor to trigger refund and cancellation workflows
+    if (sharedUser.role.toLowerCase() === "doctor" && newStatus === "suspended") {
+      return await this.suspendDoctor({
+        doctorUserId: sharedUser._id,
+        reason: reason || "Account suspended by administrator via status toggle",
+        adminUserId,
+      });
+    }
+
     sharedUser.accountStatus = newStatus;
     await sharedUser.save();
 

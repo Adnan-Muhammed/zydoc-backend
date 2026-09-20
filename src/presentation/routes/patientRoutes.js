@@ -14,7 +14,7 @@ import { PatientController } from "../controllers/PatientController.js";
 import { MedicalRecordController } from "../controllers/MedicalRecordController.js";
 import { JwtService } from '../../infrastructure/security/JwtService.js';
 
-const router = express.Router(); 
+const router = express.Router();
 
 const userRepository = new MongoUserRepository();
 const jwtService = new JwtService();
@@ -26,15 +26,15 @@ const getMedicalRecordsUseCase = new GetMedicalRecords();
 const deleteMedicalRecordUseCase = new DeleteMedicalRecord();
 
 const patientController = new PatientController(
-    updatePatientProfileUseCase,
-    getPatientProfileUseCase,
-    jwtService
+  updatePatientProfileUseCase,
+  getPatientProfileUseCase,
+  jwtService
 );
 
 const medicalRecordController = new MedicalRecordController(
-    addMedicalRecordUseCase,
-    getMedicalRecordsUseCase,
-    deleteMedicalRecordUseCase
+  addMedicalRecordUseCase,
+  getMedicalRecordsUseCase,
+  deleteMedicalRecordUseCase
 );
 
 router.get("/profile", protect, (req, res) => patientController.getProfile(req, res));
@@ -72,5 +72,12 @@ router.delete("/records/:id", protect, (req, res) => medicalRecordController.del
 
 // Patient Wallet Route
 router.get("/wallet", protect, (req, res) => walletController.getWalletDetails(req, res));
+
+// ── Patient "My Doctors" Historical Directory & Records ─────────────────────
+import { PatientDoctorsController } from "../controllers/PatientDoctorsController.js";
+const patientDoctorsController = new PatientDoctorsController();
+
+router.get("/my-doctors", protect, (req, res) => patientDoctorsController.getMyDoctors(req, res));
+router.get("/my-doctors/:doctorId/history", protect, (req, res) => patientDoctorsController.getDoctorHistory(req, res));
 
 export default router;

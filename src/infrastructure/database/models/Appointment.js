@@ -51,11 +51,12 @@ const appointmentSchema = new mongoose.Schema(
         "no-show",
         "cancelled",
         "cancelled-by-doctor",
+        "cancelled_by_admin",
         "doctor_missed",
         "disputed",
         "refund_pending",
         "refunded",
-      ],
+      ], 
       default: "scheduled",
     },
 

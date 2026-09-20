@@ -19,13 +19,19 @@ export class AdminDoctorController {
     getAdminDoctorsUseCase,
     approveDoctorUseCase,
     rejectDoctorUseCase,
-    getDoctorStatsUseCase
+    getDoctorStatsUseCase,
+    updateDoctorDocumentStatusUseCase,
+    updateDoctorQualificationStatusUseCase,
+    suspendDoctorUseCase
   ) {
     this.getPendingDoctorsUseCase = getPendingDoctorsUseCase;
     this.getAdminDoctorsUseCase = getAdminDoctorsUseCase;
     this.approveDoctorUseCase = approveDoctorUseCase;
     this.rejectDoctorUseCase = rejectDoctorUseCase;
     this.getDoctorStatsUseCase = getDoctorStatsUseCase;
+    this.updateDoctorDocumentStatusUseCase = updateDoctorDocumentStatusUseCase;
+    this.updateDoctorQualificationStatusUseCase = updateDoctorQualificationStatusUseCase;
+    this.suspendDoctorUseCase = suspendDoctorUseCase;
   }
 
   // ── GET /api/admin/doctors/pending ────────────────────────────────────────
@@ -244,6 +250,118 @@ export class AdminDoctorController {
         success: false,
         message: "Failed to fetch doctor stats.",
         error: error.message,
+      });
+    }
+  }
+
+  // ── PUT /api/admin/doctors/:id/documents/:docType/status ──────────────────
+  /**
+   * Updates verification status for a specific doctor document.
+   * Route params: id (doctor userId), docType (medicalCertificate | governmentId)
+   * Body: { status: 'approved' | 'rejected' | 'pending', reason?: string }
+   */
+  async updateDocumentStatus(req, res) {
+    try {
+      const doctorUserId = req.params.id;
+      const { docType } = req.params;
+      const { status, reason } = req.body || {};
+      const adminUserId = req.user?.id || req.user?._id;
+
+      const result = await this.updateDoctorDocumentStatusUseCase.execute({
+        doctorUserId,
+        docType,
+        status,
+        reason,
+        adminUserId,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Document (${docType}) status updated to ${status}.`,
+        ...result,
+      });
+    } catch (error) {
+      console.error("[updateDocumentStatus] Error:", error.message);
+      const statusCode =
+        error.message.includes("not found") ? 404 :
+        error.message.includes("Cannot modify") ? 400 :
+        error.message.includes("Invalid") || error.message.includes("required") ? 400 : 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: error.message || "Failed to update document status.",
+      });
+    }
+  }
+
+  // ── PUT /api/admin/doctors/:id/qualifications/:qualId/status ──────────────
+  /**
+   * Updates verification status for a specific qualification degree certificate.
+   * Route params: id (doctor userId), qualId (qualification id/index)
+   * Body: { status: 'approved' | 'rejected' | 'pending', reason?: string }
+   */
+  async updateQualificationStatus(req, res) {
+    try {
+      const doctorUserId = req.params.id;
+      const { qualId } = req.params;
+      const { status, reason } = req.body || {};
+      const adminUserId = req.user?.id || req.user?._id;
+
+      const result = await this.updateDoctorQualificationStatusUseCase.execute({
+        doctorUserId,
+        qualId,
+        status,
+        reason,
+        adminUserId,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Qualification certificate status updated to ${status}.`,
+        ...result,
+      });
+    } catch (error) {
+      console.error("[updateQualificationStatus] Error:", error.message);
+      const statusCode =
+        error.message.includes("not found") ? 404 :
+        error.message.includes("Cannot modify") ? 400 :
+        error.message.includes("Invalid") || error.message.includes("required") ? 400 : 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: error.message || "Failed to update qualification status.",
+      });
+    }
+  }
+
+  // ── PUT /api/admin/doctors/:id/suspend ────────────────────────────────────
+  /**
+   * Suspends an approved doctor's account.
+   * Route param: id (doctor userId)
+   * Body: { reason: string }
+   */
+  async suspendDoctor(req, res) {
+    try {
+      const doctorUserId = req.params.id;
+      const { reason } = req.body || {};
+      const adminUserId = req.user?.id || req.user?._id;
+
+      const result = await this.suspendDoctorUseCase.execute({
+        doctorUserId,
+        reason,
+        adminUserId,
+      });
+
+      return res.status(200).json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      console.error("[suspendDoctor] Error:", error.message);
+      const statusCode =
+        error.message.includes("not found") ? 404 :
+        error.message.includes("required") ? 400 : 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: error.message || "Failed to suspend doctor.",
       });
     }
   }

@@ -18,6 +18,9 @@ import { GetDoctorsUseCase } from "../../application/usecases/admin/GetDoctorsUs
 import { ApproveDoctorUseCase } from "../../application/usecases/admin/ApproveDoctorUseCase.js";
 import { RejectDoctorUseCase } from "../../application/usecases/admin/RejectDoctorUseCase.js";
 import { GetDoctorStatsUseCase } from "../../application/usecases/admin/GetDoctorStatsUseCase.js";
+import { UpdateDoctorDocumentStatusUseCase } from "../../application/usecases/admin/UpdateDoctorDocumentStatusUseCase.js";
+import { UpdateDoctorQualificationStatusUseCase } from "../../application/usecases/admin/UpdateDoctorQualificationStatusUseCase.js";
+import { SuspendDoctorUseCase } from "../../application/usecases/admin/SuspendDoctorUseCase.js";
 
 // Controller
 import { AdminDoctorController } from "../controllers/AdminDoctorController.js";
@@ -32,13 +35,19 @@ const getAdminDoctorsUseCase = new GetDoctorsUseCase(userRepository);
 const approveDoctorUseCase = new ApproveDoctorUseCase(userRepository);
 const rejectDoctorUseCase = new RejectDoctorUseCase(userRepository);
 const getDoctorStatsUseCase = new GetDoctorStatsUseCase(userRepository);
+const updateDoctorDocumentStatusUseCase = new UpdateDoctorDocumentStatusUseCase(userRepository);
+const updateDoctorQualificationStatusUseCase = new UpdateDoctorQualificationStatusUseCase(userRepository);
+const suspendDoctorUseCase = new SuspendDoctorUseCase(userRepository);
 
 const adminDoctorController = new AdminDoctorController(
   getPendingDoctorsUseCase,
   getAdminDoctorsUseCase,
   approveDoctorUseCase,
   rejectDoctorUseCase,
-  getDoctorStatsUseCase
+  getDoctorStatsUseCase,
+  updateDoctorDocumentStatusUseCase,
+  updateDoctorQualificationStatusUseCase,
+  suspendDoctorUseCase
 );
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -127,6 +136,42 @@ router.post(
   protect,
   canManageDoctors,
   (req, res) => adminDoctorController.rejectDoctor(req, res)
+);
+
+/**
+ * PUT /api/admin/doctors/:id/documents/:docType/status
+ * Update verification status of a specific document (medicalCertificate / governmentId).
+ * Body: { status: 'approved' | 'rejected' | 'pending', reason?: string }
+ */
+router.put(
+  "/:id/documents/:docType/status",
+  protect,
+  canManageDoctors,
+  (req, res) => adminDoctorController.updateDocumentStatus(req, res)
+);
+
+/**
+ * PUT /api/admin/doctors/:id/qualifications/:qualId/status
+ * Update verification status of a specific qualification degree certificate.
+ * Body: { status: 'approved' | 'rejected' | 'pending', reason?: string }
+ */
+router.put(
+  "/:id/qualifications/:qualId/status",
+  protect,
+  canManageDoctors,
+  (req, res) => adminDoctorController.updateQualificationStatus(req, res)
+);
+
+/**
+ * PUT /api/admin/doctors/:id/suspend
+ * Suspend an approved doctor account with a mandatory reason.
+ * Body: { reason: string }
+ */
+router.put(
+  "/:id/suspend",
+  protect,
+  canManageDoctors,
+  (req, res) => adminDoctorController.suspendDoctor(req, res)
 );
 
 /**

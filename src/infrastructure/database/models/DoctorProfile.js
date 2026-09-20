@@ -86,6 +86,13 @@ const doctorSchema = new mongoose.Schema(
       default: "",
     },
 
+    // Root-level suspension reason (set by admin when doctor account is suspended)
+    suspensionReason: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
     // Reference to the admin (SharedUser) who approved or rejected the application
     verifiedBy: {
       type: mongoose.Schema.Types.ObjectId,

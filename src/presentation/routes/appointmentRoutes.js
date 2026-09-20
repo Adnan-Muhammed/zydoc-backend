@@ -28,6 +28,7 @@ import upload from "../middleware/uploadMiddleware.js";
 import { createRazorpayOrder, verifyPayment } from "../controllers/PaymentController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOnly } from "../middleware/adminMiddleware.js";
+import { preventSuspendedDoctorAction } from "../middleware/preventSuspendedDoctorMiddleware.js";
 
 const router = express.Router();
 
@@ -37,12 +38,12 @@ router.post("/extend-lock", protect, extendAppointmentLock);
 router.get("/patient", protect, getPatientAppointments);
 router.get("/doctor", protect, getDoctorAppointments);
 router.get("/doctor/history", protect, getDoctorHistory);
-router.post("/doctor/slot-override", protect, toggleDoctorSlotOverride);
-router.post("/doctor/manual-book", protect, manualBookSlotDoctor);
-router.patch("/:id/status", protect, updateAppointmentStatus);
-router.post("/:id/complete-offline", protect, completeOfflineAppointment);
-router.post("/:id/end-call", protect, endOnlineConsultation);
-router.post("/:id/mark-no-show", protect, markNoShowOffline);
+router.post("/doctor/slot-override", protect, preventSuspendedDoctorAction, toggleDoctorSlotOverride);
+router.post("/doctor/manual-book", protect, preventSuspendedDoctorAction, manualBookSlotDoctor);
+router.patch("/:id/status", protect, preventSuspendedDoctorAction, updateAppointmentStatus);
+router.post("/:id/complete-offline", protect, preventSuspendedDoctorAction, completeOfflineAppointment);
+router.post("/:id/end-call", protect, preventSuspendedDoctorAction, endOnlineConsultation);
+router.post("/:id/mark-no-show", protect, preventSuspendedDoctorAction, markNoShowOffline);
 router.get("/availability/:doctorId", getAvailableSlots);
 router.get("/admin/all", protect, adminOnly, getAllAppointmentsAdmin);
 
@@ -62,9 +63,9 @@ router.post("/verify-payment", protect, verifyPayment);
 
 // Video Consultation Hub Clinical Console & File Routes
 router.get("/:id/clinical-context", protect, getClinicalContext);
-router.post("/:id/clinical-notes", protect, saveClinicalNotes);
-router.post("/:id/prescriptions", protect, savePrescriptions);
-router.post("/:id/consultation-files", protect, upload.single("file"), uploadConsultationFile);
+router.post("/:id/clinical-notes", protect, preventSuspendedDoctorAction, saveClinicalNotes);
+router.post("/:id/prescriptions", protect, preventSuspendedDoctorAction, savePrescriptions);
+router.post("/:id/consultation-files", protect, upload.single("file"), preventSuspendedDoctorAction, uploadConsultationFile);
 
 router.get("/:id", protect, getAppointmentById);
 

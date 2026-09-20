@@ -297,6 +297,18 @@ export const getAvailableSlots = async (req, res) => {
             return res.status(404).json({ success: false, message: "Doctor not found" });
         }
 
+        // Verify doctor account is active and approved
+        const doctorUser = await SharedUser.findOne({ profileId: doctor._id, role: 'doctor' });
+        if (!doctorUser || doctorUser.accountStatus !== 'active' || doctor.verificationStatus !== 'approved') {
+            return res.status(200).json({
+                success: true,
+                doctorWorking: false,
+                slots: [],
+                allSlots: [],
+                message: "Doctor is currently unavailable for consultations."
+            });
+        }
+
         const doctorTimezone = getDoctorTimezone(doctor);
 
         // Standardize channel selection (online vs offline vs all)
@@ -678,6 +690,12 @@ export const lockAppointmentSlot = async (req, res) => {
             lockPossibleDoctorIds.push(doctor._id);
         }
         const lockDoctorSharedUser = await SharedUser.findOne({ profileId: doctor._id || resolvedDoctorId });
+        if (!lockDoctorSharedUser || lockDoctorSharedUser.accountStatus !== 'active' || doctor.verificationStatus !== 'approved') {
+            return res.status(400).json({
+                success: false,
+                message: "This doctor is currently unavailable for bookings."
+            });
+        }
         if (lockDoctorSharedUser && !lockPossibleDoctorIds.some(id => String(id) === String(lockDoctorSharedUser._id))) {
             lockPossibleDoctorIds.push(lockDoctorSharedUser._id);
         }

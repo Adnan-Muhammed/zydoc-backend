@@ -34,6 +34,7 @@ const walletTransactionSchema = new mongoose.Schema(
         "BOOKING_PAYMENT",        // Debit: wallet used to pay for booking
         "MANUAL_REFUND",          // Admin manually issued a one-off refund
         "BANK_WITHDRAWAL",        // Debit: patient withdrew wallet balance to bank
+        "DOCTOR_SUSPENDED",       // Auto-refund: doctor account suspended by admin
       ],
       required: true,
     },
