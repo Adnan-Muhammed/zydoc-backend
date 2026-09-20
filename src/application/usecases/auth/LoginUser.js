@@ -36,11 +36,18 @@ export class LoginUser {
             await this.userRepository.update(user);
             
             try {
-                await this.mailService.sendOtpEmail(email, code);
+
+                // SEND THE EMAIL
+                                // await this.mailService.sendOtpEmail(email, code);
+
+                // PURPOSE: Sends OTP for unverified account rescue during login
+                // TODO: Uncomment the line below to enable actual email sending in production
+                // await this.mailService.sendOtpEmail(email, code);
+                console.log("TEST_LOG [Sends OTP for unverified account rescue during login]:", { email, code });
             } catch(e) {
                 console.error("Rescue email failed to send: ", e);
             }
-
+ 
             const signupToken = this.authService.generateSignupToken(user.id || user._id);
             throw new UnverifiedAccountError('Please verify your email before logging in.', signupToken);
         }

@@ -5,4 +5,8 @@ export class AppointmentRepository {
     async findExpiredLocks(currentTime) { throw new Error('Method not implemented'); }
     async findByPatientIdWithDoctorDetails(patientId) { throw new Error('Method not implemented'); }
     async findByDoctorIdWithPatientDetails(doctorId) { throw new Error('Method not implemented'); }
+    async lazyUpdateNoShows(filter = {}) { throw new Error('Method not implemented'); }
+    async getAdminAppointments(filters, options) { throw new Error('Method not implemented'); }
+    async getAdminAppointmentById(id) { throw new Error('Method not implemented'); }
+    async getAdminAppointmentStats() { throw new Error('Method not implemented'); }
 }

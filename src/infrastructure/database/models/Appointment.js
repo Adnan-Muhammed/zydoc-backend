@@ -46,10 +46,12 @@ const appointmentSchema = new mongoose.Schema(
         "locked",
         "expired",      // lock TTL passed before payment was verified
         "scheduled",
+        "in_progress",
         "completed",
         "no-show",
         "cancelled",
         "cancelled-by-doctor",
+        "doctor_missed",
         "disputed",
         "refund_pending",
         "refunded",
@@ -66,6 +68,18 @@ const appointmentSchema = new mongoose.Schema(
       type: Date,
     },
 
+    paymentMethod: {
+      type: String,
+      enum: ["FULL_ONLINE", "FULL_WALLET", "SPLIT"],
+      default: "FULL_ONLINE",
+    },
+
+    feeBreakdown: {
+      totalFee: { type: Number, default: 0 },
+      walletDeducted: { type: Number, default: 0 },
+      onlinePaid: { type: Number, default: 0 },
+    },
+
     paymentId: {
       type: String,
     },
@@ -75,11 +89,34 @@ const appointmentSchema = new mongoose.Schema(
     },
 
     adminCommission: {
+      // The absolute amount (in ₹) deducted as admin commission
       type: Number,
     },
 
-    doctorAmount: {
+    // Snapshot of the commission RATE (%) applied at booking time.
+    // Important: store rate here so historical records are not affected
+    // if admin later changes the CommissionConfig rates.
+    commissionRate: {
       type: Number,
+      min: 0,
+      max: 100,
+      default: null,
+    },
+
+    doctorAmount: {
+      // The net amount (in ₹) to be paid out to the doctor after commission
+      type: Number,
+    },
+
+    // Tracks whether the doctor's share has been released/transferred
+    payoutStatus: {
+      type: String,
+      enum: ["PENDING", "RELEASED", "HELD"],
+      // PENDING  = payment collected, not yet released to doctor
+      // RELEASED = doctor has been paid
+      // HELD     = payment on hold (e.g. active dispute)
+      default: "PENDING",
+      index: true,
     },
 
     fee: {

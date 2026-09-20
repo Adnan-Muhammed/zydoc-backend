@@ -1,10 +1,15 @@
+import { MongoWalletRepository } from '../../../infrastructure/repositories/MongoWalletRepository.js';
+import { DebitWalletUseCase } from '../wallet/DebitWalletUseCase.js';
+import { CreditWalletUseCase } from '../wallet/CreditWalletUseCase.js';
+
 export class VerifyPayment {
-  constructor(paymentService, appointmentRepository, transactionRepository, mailService, socketService) {
+  constructor(paymentService, appointmentRepository, transactionRepository, mailService, socketService, debitWalletUseCase = null) {
     this.paymentService = paymentService;
     this.appointmentRepository = appointmentRepository;
     this.transactionRepository = transactionRepository;
     this.mailService = mailService;
     this.socketService = socketService;
+    this.debitWalletUseCase = debitWalletUseCase;
   }
 
   async execute(razorpay_order_id, razorpay_payment_id, razorpay_signature) {
@@ -57,6 +62,35 @@ export class VerifyPayment {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
+    // ── Fail-safe Wallet Debit for SPLIT Payment ───────────────────────────────
+    // Debited ONLY after Razorpay confirms signature validation
+    const walletDeducted = Number(appointment.feeBreakdown?.walletDeducted || 0);
+    const isSplitPayment = appointment.paymentMethod === 'SPLIT' || walletDeducted > 0;
+
+    if (isSplitPayment && walletDeducted > 0) {
+      try {
+        const debitUseCase = this.debitWalletUseCase || new DebitWalletUseCase(new MongoWalletRepository());
+        await debitUseCase.execute({
+          patientId: appointment.patientId || appointment.lockedBy,
+          amount: walletDeducted,
+          description: `Partial wallet payment for appointment #${appointment._id}`,
+          appointmentId: appointment._id,
+        });
+        console.log(`[VerifyPayment] Successfully debited ₹${walletDeducted} from patient wallet for split booking.`);
+      } catch (debitErr) {
+        console.error('[VerifyPayment] Error debiting wallet during split payment:', debitErr);
+        // Refund the Razorpay online portion if wallet debit fails (e.g., concurrent balance drain)
+        const onlinePaid = Number(appointment.feeBreakdown?.onlinePaid || appointment.fee);
+        if (this.paymentService.refundPayment) {
+          await this.paymentService.refundPayment(razorpay_payment_id, Math.round(onlinePaid * 100));
+        }
+        const error = new Error('Wallet debit failed during split payment. Online portion has been refunded.');
+        error.code = 'WALLET_DEBIT_FAILED';
+        throw error;
+      }
+    }
+    // ───────────────────────────────────────────────────────────────────────────
+
     let commissionRate = 0;
     if (['video', 'online'].includes(appointment.consultationType)) {
         commissionRate = 0.10; // 10% for online
@@ -69,6 +103,12 @@ export class VerifyPayment {
     const atomicUpdateData = {
         paymentId: razorpay_payment_id,
         paymentStatus: 'paid',
+        paymentMethod: isSplitPayment ? 'SPLIT' : 'FULL_ONLINE',
+        feeBreakdown: appointment.feeBreakdown || {
+            totalFee: appointment.fee,
+            walletDeducted: 0,
+            onlinePaid: appointment.fee,
+        },
         adminCommission: calculatedAdminCommission,
         doctorAmount: calculatedDoctorAmount
     };
@@ -78,9 +118,25 @@ export class VerifyPayment {
 
     if (!updatedAppointment) {
         // Atomic check failed: slot was taken by a concurrent request.
-        // Trigger automatic refund.
+        // Trigger automatic refund for online portion.
+        const onlinePaid = Number(appointment.feeBreakdown?.onlinePaid || appointment.fee);
         if (this.paymentService.refundPayment) {
-            await this.paymentService.refundPayment(razorpay_payment_id, Math.round(appointment.fee * 100));
+            await this.paymentService.refundPayment(razorpay_payment_id, Math.round(onlinePaid * 100));
+        }
+        // Reverse wallet deduction if it was processed
+        if (isSplitPayment && walletDeducted > 0) {
+          try {
+            const creditUseCase = new CreditWalletUseCase(new MongoWalletRepository());
+            await creditUseCase.execute({
+              patientId: appointment.patientId || appointment.lockedBy,
+              amount: walletDeducted,
+              source: 'MANUAL_REFUND',
+              description: 'Reversal of split payment wallet deduction due to slot collision',
+              appointmentId: appointment._id,
+            });
+          } catch (reversalErr) {
+            console.error('[VerifyPayment] Failed to reverse split wallet deduction:', reversalErr);
+          }
         }
         const error = new Error('Slot expired. Payment refunded.');
         error.code = 'SLOT_EXPIRED_REFUNDED';
@@ -177,8 +233,12 @@ export class VerifyPayment {
           //  payment-booking-confirmation mail service  is commented
           if (bookingInfo && bookingInfo.patientEmail && bookingInfo.doctorEmail) {
             // console.log("[VerifyPayment] Invoking sendBookingConfirmation...");
-            //  payment-booking-confirmation mail service  is commented
-            return this.mailService.sendBookingConfirmation(bookingInfo);
+            // PURPOSE: Sends booking confirmation emails to both patient and doctor
+
+            // SEND THE EMAIL
+            // return this.mailService.sendBookingConfirmation(bookingInfo);
+            console.log("TEST_LOG [Sends booking confirmation emails]:", bookingInfo);
+            return;
           } else {
             console.log("[VerifyPayment] Skipped sending email due to missing patientEmail or doctorEmail. Info:", bookingInfo);
           }

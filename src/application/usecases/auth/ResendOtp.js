@@ -26,9 +26,13 @@ export class ResendOtp {
         user.otp = { code, expiresAt };
         await this.userRepo.update(user);
 
-        // Send Email
+        // SEND THE EMAIL
         try {
+            // PURPOSE: Sends new OTP when requested via resend
+            // TODO: Uncomment the line below to enable actual email sending in production
+
             // await this.mailService.sendOtpEmail(email, code);
+            console.log("TEST_LOG [Sends new OTP when requested via resend]:", { email, code });
         } catch (error) {
             console.error("Resend OTP Mail Error:", error);
             // We don't throw here so the user can try again in 60s

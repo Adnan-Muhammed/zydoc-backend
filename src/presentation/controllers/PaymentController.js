@@ -3,6 +3,9 @@ import { VerifyPayment } from "../../application/usecases/payment/VerifyPayment.
 import PaymentService from "../../infrastructure/services/PaymentService.js";
 import { MongoAppointmentRepository } from "../../infrastructure/repositories/MongoAppointmentRepository.js";
 import { MongoTransactionRepository } from "../../infrastructure/repositories/MongoTransactionRepository.js";
+import { MongoWalletRepository } from "../../infrastructure/repositories/MongoWalletRepository.js";
+import { DebitWalletUseCase } from "../../application/usecases/wallet/DebitWalletUseCase.js";
+import { CreditWalletUseCase } from "../../application/usecases/wallet/CreditWalletUseCase.js";
 import { MailService } from "../../infrastructure/security/MailService.js";
 import { socketService } from "../../infrastructure/services/SocketService.js";
 import MongoNotificationRepository from "../../infrastructure/repositories/MongoNotificationRepository.js";
@@ -11,31 +14,68 @@ import Admin from "../../infrastructure/database/models/AdminProfile.js";
 
 const appointmentRepo = new MongoAppointmentRepository();
 const transactionRepo = new MongoTransactionRepository();
+const walletRepo = new MongoWalletRepository();
 const mailService = new MailService();
-const createPaymentOrderUseCase = new CreatePaymentOrder(PaymentService, appointmentRepo);
-const verifyPaymentUseCase = new VerifyPayment(PaymentService, appointmentRepo, transactionRepo, mailService, socketService);
 
 const notificationRepo = new MongoNotificationRepository();
 const createNotificationUseCase = new CreateNotification(notificationRepo, socketService);
 
+const debitWalletUseCase = new DebitWalletUseCase(walletRepo);
+const creditWalletUseCase = new CreditWalletUseCase(walletRepo, createNotificationUseCase);
+
+const createPaymentOrderUseCase = new CreatePaymentOrder(
+  PaymentService,
+  appointmentRepo,
+  walletRepo,
+  debitWalletUseCase,
+  transactionRepo,
+  socketService,
+  mailService
+);
+
+const verifyPaymentUseCase = new VerifyPayment(
+  PaymentService,
+  appointmentRepo,
+  transactionRepo,
+  mailService,
+  socketService,
+  debitWalletUseCase
+);
+
 export const createRazorpayOrder = async (req, res) => {
   try {
-    const { appointmentId } = req.body;
+    const { appointmentId, useWallet } = req.body;
     const currentUserId = req.user?.id || req.user?._id;
 
     if (!appointmentId) return res.status(400).json({ success: false, message: 'appointmentId is required' });
     if (!currentUserId) return res.status(401).json({ success: false, message: 'Unauthorized. User ID not found.' });
 
-    const orderDetails = await createPaymentOrderUseCase.execute(appointmentId, currentUserId);
+    const orderDetails = await createPaymentOrderUseCase.execute(
+      appointmentId,
+      currentUserId,
+      Boolean(useWallet)
+    );
 
-    // Return the response structured exactly as the frontend expects from `appointmentService.createRazorpayOrder`
-    // Returning properties at root level so `res.data.id` maps properly.
+    // If fully covered and paid by patient wallet
+    if (orderDetails.status === 'COMPLETED_VIA_WALLET') {
+      return res.status(200).json({
+        success: true,
+        status: 'COMPLETED_VIA_WALLET',
+        appointmentId: orderDetails.appointmentId,
+        message: 'Appointment booked successfully using wallet balance'
+      });
+    }
+
+    // Return the response structured as frontend expects
     return res.status(200).json({
       success: true,
       message: 'Payment order created successfully',
       id: orderDetails.orderId,
       amount: orderDetails.amount,
-      currency: orderDetails.currency
+      currency: orderDetails.currency,
+      splitPayment: Boolean(orderDetails.splitPayment),
+      walletDeducted: orderDetails.walletDeducted || 0,
+      onlinePayable: orderDetails.onlinePayable !== undefined ? orderDetails.onlinePayable : (orderDetails.amount / 100)
     });
   } catch (error) {
     console.error('PaymentController.createRazorpayOrder Error:', error);

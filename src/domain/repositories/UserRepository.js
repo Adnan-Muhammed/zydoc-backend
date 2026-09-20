@@ -12,4 +12,8 @@ export class UserRepository {
     async getPublicDoctors(filters, options) { throw new Error('Method not implemented'); }
     async getPublicDoctorById(id) { throw new Error('Method not implemented'); }
     async updateBankDetails(doctorId, bankDetails) { throw new Error('Method not implemented'); }
+    async getAdminPatients(filters, options) { throw new Error('Method not implemented'); }
+    async getAdminPatientById(id) { throw new Error('Method not implemented'); }
+    async getAdminPatientStats() { throw new Error('Method not implemented'); }
+    async toggleUserStatus(params) { throw new Error('Method not implemented'); }
 }

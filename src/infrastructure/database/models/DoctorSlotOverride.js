@@ -18,6 +18,17 @@ const doctorSlotOverrideSchema = new mongoose.Schema(
       type: String, // e.g., "02:30 PM"
       required: true,
     },
+    startTime: {
+      type: String,
+      trim: true,
+    },
+    endTime: {
+      type: String,
+      trim: true,
+    },
+    duration: {
+      type: Number,
+    },
     status: {
       type: String,
       enum: ["unavailable", "break", "closed"],

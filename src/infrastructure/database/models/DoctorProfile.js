@@ -70,11 +70,33 @@ const doctorSchema = new mongoose.Schema(
     governmentIdStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
     governmentIdRejectionReason: { type: String, default: "" },
 
-    // Compliance Check Processing Hook
+    // ── Admin Verification / Approval ─────────────────────────────────────────
+    // Set by admin during doctor onboarding review
     verificationStatus: {
       type: String,
       enum: ["pending", "approved", "rejected"],
       default: "pending",
+    },
+
+    // Root-level rejection reason (set by admin when verificationStatus = "rejected")
+    // Distinct from per-document rejectionReason inside qualificationSchema
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // Reference to the admin (SharedUser) who approved or rejected the application
+    verifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "SharedUser",
+      default: null,
+    },
+
+    // Timestamp when the admin made their approval/rejection decision
+    verifiedAt: {
+      type: Date,
+      default: null,
     },
 
     // Core Dynamic Text Metrics arrays

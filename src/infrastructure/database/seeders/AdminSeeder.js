@@ -75,18 +75,26 @@ export const seedAdmin = async () => {
         // Check if a user with this email already exists
         const existingAdmin = await SharedUser.findOne({ email: adminEmail.toLowerCase().trim() });
         if (existingAdmin) {
-            // console.log('ℹ️ Admin user already seeded in database. Skipping initialization.');
-            // console log commented 
+            // Ensure existing admin profile has full superadmin permissions
+            if (existingAdmin.profileId) {
+                await AdminProfile.findByIdAndUpdate(existingAdmin.profileId, {
+                    $set: {
+                        isSuperAdmin: true,
+                        adminRole: 'super_admin',
+                        permissions: ['full_access']
+                    }
+                });
+            }
             return;
         }
 
-        // console.log('🌱 Seeding administrative accounts into clean environment...');
-        // console log commented 
         // 1. Instantiate and preserve the AdminProfile document first
         const adminProfile = new AdminProfile({
             name: adminName || 'System Admin',
             department: 'Management',
-            accessLevel: 'superadmin' // Matches our updated enum schema configuration ["superadmin", "moderator", "support"]
+            adminRole: 'super_admin',
+            isSuperAdmin: true,
+            permissions: ['full_access']
         });
         const savedProfile = await adminProfile.save();
 

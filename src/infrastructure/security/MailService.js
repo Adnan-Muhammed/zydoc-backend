@@ -134,4 +134,64 @@ export class MailService {
             // Swallowing error to prevent blocking the main payment verification API response
         }
     }
+
+    async sendRefundApprovedEmail({ patientEmail, patientName = "Patient", refundAmount, ticketId, note = "" }) {
+        const mailOptions = {
+            from: `"ZyDoc Consulting" <${process.env.EMAIL_USER}>`,
+            to: `"${patientName}" <${patientEmail}>`,
+            subject: 'Refund Request Approved - ZyDoc',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
+                    <h2 style="color: #16a34a; text-align: center;">Refund Request Approved</h2>
+                    <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">
+                        Hello ${patientName}, your refund request (Ticket #${ticketId}) has been reviewed and approved.
+                    </p>
+                    <div style="background-color: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #bbf7d0;">
+                        <p style="margin: 5px 0; color: #166534; font-size: 18px;"><strong>Amount Credited:</strong> ₹${refundAmount}</p>
+                        <p style="margin: 5px 0; color: #374151;"><strong>Method:</strong> Credited to your ZyDoc Wallet</p>
+                        ${note ? `<p style="margin: 5px 0; color: #374151;"><strong>Admin Note:</strong> ${note}</p>` : ''}
+                    </div>
+                    <p style="color: #6b7280; font-size: 14px;">
+                        The credited amount is immediately available in your wallet for booking future appointments.
+                    </p>
+                </div>
+            `,
+        };
+
+        try {
+            // In production with configured SMTP:
+            // await this.transporter.sendMail(mailOptions);
+        } catch (error) {
+            console.error("[MAILER] Error sending refund approved email:", error);
+        }
+    }
+
+    async sendRefundRejectedEmail({ patientEmail, patientName = "Patient", ticketId, reason }) {
+        const mailOptions = {
+            from: `"ZyDoc Consulting" <${process.env.EMAIL_USER}>`,
+            to: `"${patientName}" <${patientEmail}>`,
+            subject: 'Refund Request Update - ZyDoc',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
+                    <h2 style="color: #dc2626; text-align: center;">Refund Request Denied</h2>
+                    <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">
+                        Hello ${patientName}, after reviewing your refund request (Ticket #${ticketId}), we regret to inform you that it was denied.
+                    </p>
+                    <div style="background-color: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #fecaca;">
+                        <p style="margin: 5px 0; color: #991b1b;"><strong>Reason:</strong> ${reason}</p>
+                    </div>
+                    <p style="color: #9ca3af; font-size: 14px; text-align: center;">
+                        If you have questions regarding this decision, please contact ZyDoc support.
+                    </p>
+                </div>
+            `,
+        };
+
+        try {
+            // In production with configured SMTP:
+            // await this.transporter.sendMail(mailOptions);
+        } catch (error) {
+            console.error("[MAILER] Error sending refund rejected email:", error);
+        }
+    }
 }

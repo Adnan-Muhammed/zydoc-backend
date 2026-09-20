@@ -20,6 +20,7 @@ import adminAuthRoutes from "./src/presentation/routes/adminAuthRoutes.js";
 import userRoutes from "./src/presentation/routes/userRoutes.js";
 import adminRoutes from "./src/presentation/routes/adminRoutes.js";
 import { seedAdmin } from "./src/infrastructure/database/seeders/AdminSeeder.js";
+import { seedCommissionConfig } from "./src/infrastructure/database/seeders/commissionConfigSeeder.js";
 import doctorRoutes from "./src/presentation/routes/doctorRoutes.js";
 import adminDoctorRoutes from "./src/presentation/routes/adminDoctorRoutes.js";
 import adminPatientRoutes from "./src/presentation/routes/adminPatientRoutes.js";
@@ -28,11 +29,22 @@ import patientRoutes from "./src/presentation/routes/patientRoutes.js";
 import appointmentRoutes from "./src/presentation/routes/appointmentRoutes.js";
 import notificationRoutes from "./src/presentation/routes/notificationRoutes.js";
 import reviewRoutes from "./src/modules/reviews-ratings/routes/reviewRoutes.js";
+import walletRoutes from "./src/presentation/routes/walletRoutes.js";
+import paymentRoutes from "./src/presentation/routes/paymentRoutes.js";
+import adminSettingsRoutes from "./src/presentation/routes/adminSettingsRoutes.js";
+import adminRefundRoutes from "./src/presentation/routes/adminRefundRoutes.js";
+import adminAppointmentRoutes from "./src/presentation/routes/adminAppointmentRoutes.js";
+import adminAnalyticsRoutes from "./src/presentation/routes/adminAnalyticsRoutes.js";
+import adminUserRoutes from "./src/presentation/routes/adminUserRoutes.js";
+import adminNotificationRoutes from "./src/presentation/routes/adminNotificationRoutes.js";
+import adminFinancialRoutes from "./src/presentation/routes/adminFinancialRoutes.js";
 
 // Initialize Cron Jobs
 import "./src/infrastructure/cron/SlotCron.js";
 import { startOfflineNoShowCron } from "./src/infrastructure/cron/OfflineNoShowCron.js";
+import { startStuckAppointmentAuditCron } from "./src/infrastructure/cron/StuckAppointmentAuditCron.js";
 startOfflineNoShowCron();
+startStuckAppointmentAuditCron();
 
 
 // Config
@@ -83,7 +95,8 @@ if (process.env.NODE_ENV === "development") {
 
 // Connect to Database
 connectDB().then(() => {
-  seedAdmin(); 
+  seedAdmin();
+  seedCommissionConfig();
 });
 
 app.use("/uploads", express.static("uploads"));
@@ -98,12 +111,22 @@ app.use("/api/admin/auth", adminAuthRoutes);  // login for admin
 
 app.use("/api/admin/doctors", adminDoctorRoutes);
 app.use("/api/admin/patients", adminPatientRoutes);
+app.use("/api/admin/settings", adminSettingsRoutes);
+app.use("/api/admin/refunds", adminRefundRoutes);
+app.use("/api/admin/appointments", adminAppointmentRoutes);
+app.use("/api/admin/analytics", adminAnalyticsRoutes);
+app.use("/api/admin/users", adminUserRoutes);
+app.use("/api/admin/notifications", adminNotificationRoutes);
+app.use("/api/admin/financials", adminFinancialRoutes);
 app.use("/api/doctor/", doctorRoutes);   // doctor  profile completions
 
 
 
    
 app.use("/api/patient/", patientRoutes); // patient profile completions
+app.use("/api/patient/wallet", walletRoutes); // patient wallet flow
+app.use("/api/wallet", walletRoutes); // patient wallet alias
+app.use("/api/payment", paymentRoutes); // payment flow
 app.use("/api/appointments", appointmentRoutes); // appointments flow
 app.use("/api/notifications", notificationRoutes); // notification system
 app.use("/api/reviews", reviewRoutes); // doctor reviews and ratings system

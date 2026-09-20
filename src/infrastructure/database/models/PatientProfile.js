@@ -44,6 +44,12 @@ const patientSchema = new mongoose.Schema({
         allergies: [{ type: String }],
         chronicConditions: [{ type: String }],
         currentMedications: [{ type: String }]
+    },
+
+    walletBalance: {
+        type: Number,
+        default: 0,
+        min: 0
     }
 }, { timestamps: true });
 

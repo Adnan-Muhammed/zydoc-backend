@@ -12,6 +12,10 @@ export class AuthController {
     resendOtpUseCase,
     googleLoginUser,
     setRoleUseCase,
+    forgotPasswordUseCase,
+    verifyResetOtpUseCase,
+    resetPasswordUseCase,
+    changePasswordUseCase,
   ) {
     this.signupUser = signupUser;
     this.loginUser = loginUser;
@@ -23,6 +27,10 @@ export class AuthController {
     this.resendOtpUseCase = resendOtpUseCase;
     this.googleLoginUser = googleLoginUser;
     this.setRoleUseCase = setRoleUseCase;
+    this.forgotPasswordUseCase = forgotPasswordUseCase;
+    this.verifyResetOtpUseCase = verifyResetOtpUseCase;
+    this.resetPasswordUseCase = resetPasswordUseCase;
+    this.changePasswordUseCase = changePasswordUseCase;
   }
 
   // ✅ HELPER: Map User Response
@@ -35,7 +43,10 @@ export class AuthController {
       role: user.role,
       isProfileCompleted: user.isProfileCompleted || false,
       verificationStatus: user.verificationStatus || "pending",
+      approvalStatus: user.approvalStatus || user.verificationStatus || "pending",
+      rejectionReason: user.rejectionReason || "",
       isDeleted: user.isDeleted,
+      hasPassword: !!user.password,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       lastLogin: user.lastLogin,
@@ -47,6 +58,13 @@ export class AuthController {
       response.governmentIdStatus = user.governmentIdStatus;
       response.governmentIdRejectionReason = user.governmentIdRejectionReason;
       response.qualifications = user.qualifications;
+    }
+
+    if (user.role === "admin") {
+      response.isSuperAdmin = user.isSuperAdmin || false;
+      response.permissions = user.permissions || [];
+      response.adminRole = user.adminRole || "super_admin";
+      response.department = user.department || "Management";
     }
 
     return response;
@@ -148,6 +166,52 @@ export class AuthController {
     try {
       const { email } = req.body;
       const result = await this.resendOtpUseCase.execute(email);
+      res.status(200).json(result);
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  // ✅ FORGOT PASSWORD
+  async forgotPassword(req, res) {
+    try {
+      const result = await this.forgotPasswordUseCase.execute(req.body);
+      res.status(200).json(result);
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  // ✅ VERIFY RESET OTP
+  async verifyResetOtp(req, res) {
+    try {
+      const result = await this.verifyResetOtpUseCase.execute(req.body);
+      res.status(200).json(result);
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  // ✅ RESET PASSWORD
+  async resetPassword(req, res) {
+    try {
+      const result = await this.resetPasswordUseCase.execute(req.body);
+      res.status(200).json(result);
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  }
+
+  // ✅ CHANGE PASSWORD
+  async changePassword(req, res) {
+    try {
+      const userId = req.user?.id || req.user?._id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+      
+      const { currentPassword, newPassword } = req.body;
+      const result = await this.changePasswordUseCase.execute(userId, currentPassword, newPassword);
       res.status(200).json(result);
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });

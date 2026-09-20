@@ -71,7 +71,12 @@ export class SignupUser {
 
         // 4. SEND THE EMAIL
         try {
-            await this.mailService.sendOtpEmail(email, code);
+                        // await this.mailService.sendOtpEmail(email, code);
+
+            // PURPOSE: Sends OTP for sign-up verification
+            // TODO: Uncomment the line below to enable actual email sending in production
+            // await this.mailService.sendOtpEmail(email, code);
+            console.log("TEST_LOG [Sends OTP for sign-up verification]:", { email, code });
         } catch (error) {
             console.error("Email delivery failed:", error);
         }

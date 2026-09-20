@@ -57,6 +57,8 @@ router.put(
   (req, res) => patientController.updateProfile(req, res)
 );
 
+import { walletController } from "../controllers/WalletController.js";
+
 // Medical Records Routes
 router.post(
   "/records",
@@ -67,5 +69,8 @@ router.post(
 
 router.get("/records", protect, (req, res) => medicalRecordController.getRecords(req, res));
 router.delete("/records/:id", protect, (req, res) => medicalRecordController.deleteRecord(req, res));
+
+// Patient Wallet Route
+router.get("/wallet", protect, (req, res) => walletController.getWalletDetails(req, res));
 
 export default router;

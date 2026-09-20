@@ -16,6 +16,14 @@ router.post("/verify-otp", (req, res) => authController.verifyOtp(req, res));
 
 router.post("/resend-otp", (req, res) => authController.resendOtp(req, res));
 
+router.post("/forgot-password", (req, res) => authController.forgotPassword(req, res));
+
+router.post("/verify-reset-otp", (req, res) => authController.verifyResetOtp(req, res));
+
+router.post("/reset-password", (req, res) => authController.resetPassword(req, res));
+
+router.post("/change-password", protect, (req, res) => authController.changePassword(req, res));
+
 router.post("/login", redirectIfAuth, (req, res) =>
   authController.login(req, res),
 );

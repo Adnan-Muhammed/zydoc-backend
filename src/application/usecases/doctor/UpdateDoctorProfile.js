@@ -136,7 +136,9 @@ export class UpdateDoctorProfile {
         return {
           ...q,
           certificateName: certFile ? certFile.originalname.substring(certFile.originalname.indexOf('___') + 3) : q.certificateName || "",
-          certificateUrl: finalUrl
+          certificateUrl: finalUrl,
+          certificateStatus: "pending",
+          rejectionReason: "",
         };
       }),
 
@@ -150,6 +152,11 @@ export class UpdateDoctorProfile {
       profileCompleted: true,
 
       verificationStatus: "pending",
+      rejectionReason: "",
+      medicalCertificateStatus: "pending",
+      medicalCertificateRejectionReason: "",
+      governmentIdStatus: "pending",
+      governmentIdRejectionReason: "",
     };
 
     // ─────────────────────────────────────

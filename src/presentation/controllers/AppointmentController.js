@@ -29,8 +29,17 @@ import MongoNotificationRepository from "../../infrastructure/repositories/Mongo
 import CreateNotification from "../../application/usecases/notification/CreateNotification.js";
 import { socketService } from "../../infrastructure/services/SocketService.js";
 import mongoose from "mongoose";
+import { MongoWalletRepository } from "../../infrastructure/repositories/MongoWalletRepository.js";
+import { CreditWalletUseCase } from "../../application/usecases/wallet/CreditWalletUseCase.js";
+import { CancelAppointmentUseCase } from "../../application/usecases/appointment/CancelAppointmentUseCase.js";
+import { ApproveOfflineDisputeUseCase } from "../../application/usecases/admin/ApproveOfflineDisputeUseCase.js";
 
-const appointmentRepo = new MongoAppointmentRepository();
+const notificationRepo = new MongoNotificationRepository();
+const createNotificationUseCase = new CreateNotification(notificationRepo, socketService);
+
+const walletRepo = new MongoWalletRepository();
+const creditWalletUseCase = new CreditWalletUseCase(walletRepo, createNotificationUseCase);
+const appointmentRepo = new MongoAppointmentRepository(creditWalletUseCase);
 const lockSlotUseCase = new LockSlot(appointmentRepo);
 const unlockSlotUseCase = new UnlockSlot(appointmentRepo);
 const getPatientAppointmentsUseCase = new GetPatientAppointments(appointmentRepo);
@@ -38,8 +47,9 @@ const getDoctorAppointmentsUseCase = new GetDoctorAppointments(appointmentRepo);
 const getAllAppointmentsAdminUseCase = new GetAllAppointmentsAdmin(appointmentRepo);
 const getDoctorHistoryUseCase = new GetDoctorHistory(appointmentRepo);
 const extendSlotLockUseCase = new ExtendSlotLock(appointmentRepo);
-const notificationRepo = new MongoNotificationRepository();
-const createNotificationUseCase = new CreateNotification(notificationRepo, socketService);
+
+const cancelAppointmentUseCase = new CancelAppointmentUseCase(creditWalletUseCase, createNotificationUseCase);
+const approveOfflineDisputeUseCase = new ApproveOfflineDisputeUseCase(creditWalletUseCase, createNotificationUseCase);
 
 // Get appointments for a specific patient
 export const getPatientAppointments = async (req, res) => {
@@ -513,6 +523,32 @@ export const getAvailableSlots = async (req, res) => {
             }
         });
 
+        // Compute break intervals so off-grid breaks also properly block overlapping candidate slots
+        const breakIntervals = slotOverrides.map(ov => {
+            let startStr = ov.startTime || ov.time || "";
+            let endStr = ov.endTime || "";
+            if (ov.time && (ov.time.includes('-') || ov.time.toLowerCase().includes(' to '))) {
+                const parts = ov.time.includes('-') ? ov.time.split('-') : ov.time.split(/ to /i);
+                if (!startStr) startStr = parts[0].trim();
+                if (!endStr && parts[1]) endStr = parts[1].trim();
+            }
+            const parsedStart = parseTimeStr(startStr);
+            const startMins = parsedStart.h * 60 + parsedStart.m;
+            let endMins = 0;
+            if (endStr) {
+                const parsedEnd = parseTimeStr(endStr);
+                endMins = parsedEnd.h * 60 + parsedEnd.m;
+            }
+            const duration = (endMins > startMins) ? (endMins - startMins) : (ov.duration || slotDuration);
+            if (endMins <= startMins) endMins = startMins + duration;
+
+            return {
+                startMins,
+                endMins,
+                override: ov
+            };
+        });
+
         const allSlotsWithStatus = generatedSlotsInfo.map(slotInfo => {
             const { time: slotTime, startMins: candidateStartMins, endMins: candidateEndMins, slotType, shiftIndex, shiftName, shiftStart, shiftEnd, shiftType } = slotInfo;
 
@@ -534,7 +570,11 @@ export const getAvailableSlots = async (req, res) => {
                 : slotDuration;
             const graceMinutes = getLateJoinGraceMinutes(slotDuration);
 
-            const slotOverride = overrideMap.get(slotTime.trim().toUpperCase()) || overrideMap.get(slotTime.trim());
+            // Check interval-based break overlap as well as exact time match
+            const conflictingBreak = breakIntervals.find(b => 
+                (candidateStartMins < b.endMins) && (candidateEndMins > b.startMins)
+            );
+            const slotOverride = conflictingBreak?.override || overrideMap.get(slotTime.trim().toUpperCase()) || overrideMap.get(slotTime.trim());
 
             let status;
             let breakReason = null;
@@ -593,7 +633,8 @@ export const getAvailableSlots = async (req, res) => {
             doctorWorking: true,
             doctorTimezone,
             slots: availableSlots,
-            allSlots: allSlotsWithStatus
+            allSlots: allSlotsWithStatus,
+            overrides: slotOverrides
         });
 
     } catch (error) {
@@ -758,152 +799,31 @@ export const getAllAppointmentsAdmin = async (req, res) => {
 export const cancelAppointment = async (req, res) => {
     try {
         const { id } = req.params;
-        const patientId = req.user.id || req.user._id;
+        const patientId = req.user?.id || req.user?._id;
 
         if (!patientId) {
             return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
         }
 
-        const appointment = await Appointment.findById(id);
-        if (!appointment) {
-            return res.status(404).json({ success: false, message: "Appointment not found." });
-        }
+        const sharedUser = await SharedUser.findById(patientId);
+        const doctorProfileId = sharedUser?.profileId;
 
-        // Only the patient who booked may cancel
-        if (appointment.patientId.toString() !== patientId.toString()) {
-            return res.status(403).json({ success: false, message: "You are not authorized to cancel this appointment." });
-        }
-
-        // Only scheduled appointments can be cancelled
-        if (appointment.status !== 'scheduled') {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot cancel appointment with status '${appointment.status}'. Only 'scheduled' appointments can be cancelled.`
-            });
-        }
-
-        // Handle direct doctor cancellation of manual bookings (no refund needed, zero commission)
-        if (appointment.isManualBooking) {
-            appointment.status = 'cancelled-by-doctor';
-            appointment.cancellationReason = req.body.reason || 'Cancelled by doctor';
-            appointment.cancelledAt = new Date();
-            // Prune dead operational state
-            appointment.lockedBy = undefined;
-            appointment.lockExpiryTime = undefined;
-            appointment.roomId = undefined;
-            appointment.offlineOTP = undefined;
-            appointment.lateJoinCutoffAt = undefined;
-            await appointment.save();
-            return res.status(200).json({
-                success: true,
-                message: "Manual appointment cancelled successfully. The slot is now free.",
-                appointment
-            });
-        }
-
-        // Calculate appointment scheduled start time
-        const dateStr = appointment.appointmentDate ? new Date(appointment.appointmentDate).toISOString().split('T')[0] : null;
-        const appointmentStartUTC = appointment.scheduledStartAt
-            ? new Date(appointment.scheduledStartAt)
-            : getSlotExactUTC(dateStr, appointment.appointmentTime);
-
-        const now = new Date();
-        const diffMs = appointmentStartUTC.getTime() - now.getTime();
-        const diffHours = diffMs / (1000 * 60 * 60);
-
-        // Strict 12-Hour Rule: current time must be strictly greater than 12 hours before scheduledStartAt
-        if (diffHours <= 12) {
-            return res.status(400).json({
-                success: false,
-                code: "CANCELLATION_WINDOW_CLOSED",
-                message: "Appointments can only be cancelled strictly more than 12 hours prior to the scheduled time."
-            });
-        }
-
-        // Trigger Razorpay Auto-Refund API
-        let refundResult = null;
-        if (appointment.paymentId && appointment.fee > 0) {
-            try {
-                refundResult = await razorpayRefund(appointment.paymentId, appointment.fee, {
-                    notes: {
-                        reason: req.body.reason || 'Patient 12h cancellation',
-                        appointmentId: appointment._id.toString()
-                    }
-                });
-                console.log(`[cancelAppointment] Refund successful for appointment ${appointment._id}:`, refundResult?.id);
-            } catch (refundErr) {
-                console.error(`[cancelAppointment] Razorpay refund API failed:`, refundErr);
-                return res.status(500).json({
-                    success: false,
-                    message: "Failed to process automatic refund with Razorpay. Cancellation aborted. Please try again or contact support."
-                });
-            }
-        }
-
-        // Update appointment status to 'cancelled' and paymentStatus to 'refunded'
-        appointment.status = 'cancelled';
-        appointment.paymentStatus = 'refunded';
-        appointment.cancellationReason = req.body.reason || 'Cancelled by patient (>12h before appointment)';
-        appointment.cancelledAt = new Date();
-        appointment.refundedAt = new Date();
-        if (refundResult?.id) {
-            appointment.refundId = refundResult.id;
-            appointment.refundAmount = appointment.fee;
-        }
-
-        // Cleanly prune dead operational state while strictly retaining audit/financial records
-        appointment.lockedBy = undefined;
-        appointment.lockExpiryTime = undefined;
-        appointment.roomId = undefined;
-        appointment.offlineOTP = undefined;
-        appointment.lateJoinCutoffAt = undefined;
-
-        await appointment.save();
-
-        // Cancel doctor's transaction payout (mark Transaction status as 'refunded')
-        try {
-            await Transaction.findOneAndUpdate(
-                { appointmentId: appointment._id },
-                { $set: { status: 'refunded' } }
-            );
-            console.log(`[cancelAppointment] Linked transaction for ${appointment._id} marked as refunded.`);
-        } catch (txErr) {
-            console.error(`[cancelAppointment] Error updating transaction status for ${appointment._id}:`, txErr);
-        }
-
-        // Trigger notifications
-        try {
-            // Patient notification
-            await createNotificationUseCase.execute({
-                recipientId: appointment.patientId,
-                recipientModel: 'User',
-                type: 'APPOINTMENT_CANCELLED',
-                title: 'Appointment Cancelled & Refunded',
-                message: `Your appointment on ${new Date(appointment.appointmentDate).toDateString()} at ${appointment.appointmentTime} has been cancelled. A 100% refund of ₹${appointment.fee} has been issued.`,
-                referenceId: appointment._id
-            });
-
-            // Doctor notification
-            await createNotificationUseCase.execute({
-                recipientId: appointment.doctorId,
-                recipientModel: 'Doctor',
-                type: 'APPOINTMENT_CANCELLED',
-                title: 'Appointment Cancelled by Patient',
-                message: `Patient cancelled their appointment scheduled for ${new Date(appointment.appointmentDate).toDateString()} at ${appointment.appointmentTime}. Slot is now open.`,
-                referenceId: appointment._id
-            });
-        } catch (notifErr) {
-            console.error(`[cancelAppointment] Notification error:`, notifErr);
-        }
-
-        res.status(200).json({
-            success: true,
-            message: "Appointment cancelled successfully. A full refund has been initiated to your original payment method.",
-            appointment
+        const result = await cancelAppointmentUseCase.execute({
+            appointmentId: id,
+            patientId,
+            doctorId: doctorProfileId || patientId,
+            userRole: req.user?.role,
+            reason: req.body?.reason
         });
+
+        return res.status(200).json(result);
     } catch (error) {
         console.error("Cancel Appointment Error:", error);
-        res.status(500).json({ success: false, message: "Server error", error: error.message });
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            code: error.code,
+            message: error.message || "Failed to cancel appointment"
+        });
     }
 };
 
@@ -1072,93 +992,22 @@ export const getDisputedAppointmentsAdmin = async (req, res) => {
 export const refundDisputedAppointmentAdmin = async (req, res) => {
     try {
         const { id } = req.params;
-        const appointment = await Appointment.findById(id);
+        const adminId = req.user?.id || req.user?._id;
 
-        if (!appointment) {
-            return res.status(404).json({ success: false, message: "Appointment not found." });
-        }
-
-        if (appointment.status === 'refunded' || appointment.paymentStatus === 'refunded') {
-            return res.status(400).json({ success: false, message: "Appointment is already refunded." });
-        }
-
-        // Trigger Razorpay Refund API
-        let refundResult = null;
-        if (appointment.paymentId && appointment.fee > 0) {
-            try {
-                refundResult = await razorpayRefund(appointment.paymentId, appointment.fee, {
-                    notes: {
-                        reason: req.body.notes || 'Admin dispute refund approval',
-                        appointmentId: appointment._id.toString()
-                    }
-                });
-                console.log(`[refundDisputedAppointmentAdmin] Refund successful for ${appointment._id}:`, refundResult?.id);
-            } catch (refundErr) {
-                console.error(`[refundDisputedAppointmentAdmin] Razorpay refund failed:`, refundErr);
-                return res.status(500).json({
-                    success: false,
-                    message: "Failed to process Razorpay refund. Please check credentials or try again."
-                });
-            }
-        }
-
-        // Update appointment status to refunded
-        appointment.status = 'refunded';
-        appointment.paymentStatus = 'refunded';
-        appointment.disputeResolvedAt = new Date();
-        appointment.refundedAt = new Date();
-        appointment.adminRefundNotes = req.body.notes || 'Refund approved by Admin after dispute investigation.';
-        if (refundResult?.id) {
-            appointment.refundId = refundResult.id;
-            appointment.refundAmount = appointment.fee;
-        }
-
-        await appointment.save();
-
-        // Cancel doctor payout in Transaction
-        try {
-            await Transaction.findOneAndUpdate(
-                { appointmentId: appointment._id },
-                { $set: { status: 'refunded' } }
-            );
-            console.log(`[refundDisputedAppointmentAdmin] Transaction marked as refunded for ${appointment._id}`);
-        } catch (txErr) {
-            console.error(`[refundDisputedAppointmentAdmin] Error updating transaction:`, txErr);
-        }
-
-        // Notify Patient & Doctor
-        try {
-            // Patient notification
-            await createNotificationUseCase.execute({
-                recipientId: appointment.patientId,
-                recipientModel: 'User',
-                type: 'REFUND_APPROVED',
-                title: 'Refund Approved',
-                message: `Your refund request for appointment on ${new Date(appointment.appointmentDate).toDateString()} has been approved. ₹${appointment.fee} refunded.`,
-                referenceId: appointment._id
-            });
-
-            // Doctor notification
-            await createNotificationUseCase.execute({
-                recipientId: appointment.doctorId,
-                recipientModel: 'Doctor',
-                type: 'PAYOUT_CANCELLED',
-                title: 'Offline Dispute Settled - Payout Cancelled',
-                message: `The dispute for the appointment on ${new Date(appointment.appointmentDate).toDateString()} was settled in favor of the patient. The doctor payout has been cancelled.`,
-                referenceId: appointment._id
-            });
-        } catch (notifErr) {
-            console.error(`[refundDisputedAppointmentAdmin] Notification error:`, notifErr);
-        }
-
-        res.status(200).json({
-            success: true,
-            message: "Dispute approved and refund processed successfully via Razorpay.",
-            appointment
+        const result = await approveOfflineDisputeUseCase.execute({
+            appointmentId: id,
+            adminId,
+            notes: req.body?.notes
         });
+
+        return res.status(200).json(result);
     } catch (error) {
         console.error("Refund Disputed Appointment Admin Error:", error);
-        res.status(500).json({ success: false, message: "Server error", error: error.message });
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to approve dispute refund",
+            error: error.message
+        });
     }
 };
 
@@ -1180,7 +1029,7 @@ export const toggleDoctorSlotOverride = async (req, res) => {
         }
         const doctorId = sharedUser.profileId;
 
-        const { date, time, action, reason } = req.body;
+        const { date, time, action, reason, startTime, endTime, duration } = req.body;
         if (!date || !time || !action) {
             return res.status(400).json({
                 success: false,
@@ -1190,6 +1039,16 @@ export const toggleDoctorSlotOverride = async (req, res) => {
 
         const trimmedDate = date.trim();
         const trimmedTime = time.trim();
+
+        const doctorDoc = await Doctor.findById(doctorId);
+        const doctorTimezone = getDoctorTimezone(doctorDoc);
+        const slotExactUTC = getSlotExactUTC(trimmedDate, trimmedTime, doctorTimezone);
+        if (slotExactUTC && new Date().getTime() >= slotExactUTC.getTime()) {
+            return res.status(400).json({
+                success: false,
+                message: "Cannot update or modify slot status for a time that has already passed."
+            });
+        }
 
         if (action === 'close' || action === 'unavailable' || action === 'break') {
             // Validate there is no existing active booked appointment
@@ -1208,15 +1067,22 @@ export const toggleDoctorSlotOverride = async (req, res) => {
                 });
             }
 
+            const updateDoc = {
+                doctorId,
+                date: trimmedDate,
+                time: trimmedTime,
+                status: 'unavailable',
+                reason: reason?.trim() || 'Closed / On Break'
+            };
+            if (startTime) updateDoc.startTime = startTime.trim();
+            if (endTime) updateDoc.endTime = endTime.trim();
+            if (duration !== undefined && duration !== null && !isNaN(Number(duration))) {
+                updateDoc.duration = Number(duration);
+            }
+
             const override = await DoctorSlotOverride.findOneAndUpdate(
                 { doctorId, date: trimmedDate, time: trimmedTime },
-                {
-                    doctorId,
-                    date: trimmedDate,
-                    time: trimmedTime,
-                    status: 'unavailable',
-                    reason: reason?.trim() || 'Closed / On Break'
-                },
+                updateDoc,
                 { upsert: true, new: true, setDefaultsOnInsert: true }
             );
 
@@ -1229,7 +1095,12 @@ export const toggleDoctorSlotOverride = async (req, res) => {
             await DoctorSlotOverride.deleteMany({
                 doctorId: { $in: [doctorId, sharedUser._id] },
                 date: trimmedDate,
-                time: trimmedTime
+                $or: [
+                    { time: trimmedTime },
+                    { time: trimmedTime.toUpperCase() },
+                    { time: trimmedTime.toLowerCase() },
+                    { time: new RegExp(`^${trimmedTime.replace(/\s+/g, '\\s*')}$`, 'i') }
+                ]
             });
             return res.status(200).json({
                 success: true,
@@ -1306,6 +1177,12 @@ export const manualBookSlotDoctor = async (req, res) => {
         // 3. Compute slot timings
         const doctorTimezone = getDoctorTimezone(doctor);
         const slotExactUTC = getSlotExactUTC(trimmedDate, trimmedTime, doctorTimezone);
+        if (slotExactUTC && new Date().getTime() >= slotExactUTC.getTime()) {
+            return res.status(400).json({
+                success: false,
+                message: "Cannot manually book a slot for a time that has already passed."
+            });
+        }
         const slotDuration = Number(doctor.slotDuration) || 15;
         const scheduledEndAt = new Date(slotExactUTC.getTime() + slotDuration * 60000);
 

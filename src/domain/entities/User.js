@@ -13,6 +13,8 @@ export class User {
         this.isVerified = false; // Default
         this.isProfileCompleted = false; // 🔥 Tracks if user completed their onboarding forms
         this.verificationStatus = 'pending'; // 🔥 Tracks if admin approved the doctor ('pending', 'approved', 'rejected')
+        this.approvalStatus = 'pending'; // Alias for verificationStatus
+        this.rejectionReason = ''; // Admin feedback reason upon rejection
         this.avatarUrl = null;
         
         // Document statuses for doctors
@@ -21,6 +23,12 @@ export class User {
         this.governmentIdStatus = 'pending';
         this.governmentIdRejectionReason = '';
         this.qualifications = [];
+
+        // Admin RBAC fields
+        this.isSuperAdmin = false;
+        this.permissions = [];
+        this.adminRole = 'support';
+        this.department = 'Management';
 
         this.otp = { code: null, expiresAt: null };
     }

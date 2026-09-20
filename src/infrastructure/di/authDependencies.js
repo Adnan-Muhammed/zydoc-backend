@@ -17,6 +17,10 @@ import { SetRole } from "../../application/usecases/auth/SetRole.js";
 import { RefreshToken } from "../../application/usecases/auth/RefreshToken.js";
 import { LogoutUser } from "../../application/usecases/auth/LogoutUser.js";
 import { GetUserProfile } from "../../application/usecases/user/GetUserProfile.js";
+import { ForgotPassword } from "../../application/usecases/auth/ForgotPassword.js";
+import { VerifyResetOtp } from "../../application/usecases/auth/VerifyResetOtp.js";
+import { ResetPassword } from "../../application/usecases/auth/ResetPassword.js";
+import { ChangePassword } from "../../application/usecases/auth/ChangePassword.js";
 
 // Composition Root for Auth Module
 const userRepository = new MongoUserRepository();
@@ -53,6 +57,10 @@ const setRoleUseCase = new SetRole(userRepository, authService);
 const refreshTokenUseCase = new RefreshToken(userRepository, authService);
 const logoutUserUseCase = new LogoutUser(userRepository);
 const getUserProfileUseCase = new GetUserProfile(userRepository);
+const forgotPasswordUseCase = new ForgotPassword(userRepository, otpService, mailService);
+const verifyResetOtpUseCase = new VerifyResetOtp(userRepository, otpService);
+const resetPasswordUseCase = new ResetPassword(userRepository, otpService, authService);
+const changePasswordUseCase = new ChangePassword(userRepository, authService);
 
 export const authController = new AuthController(
   signupUserUseCase,
@@ -64,5 +72,9 @@ export const authController = new AuthController(
   verifyOtpUseCase,
   resendOtpUseCase,
   googleLoginUserUseCase,
-  setRoleUseCase
+  setRoleUseCase,
+  forgotPasswordUseCase,
+  verifyResetOtpUseCase,
+  resetPasswordUseCase,
+  changePasswordUseCase
 );
