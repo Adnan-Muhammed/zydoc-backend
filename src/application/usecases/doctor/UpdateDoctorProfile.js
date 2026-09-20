@@ -111,6 +111,8 @@ export class UpdateDoctorProfile {
       bio: profileData.bio,
 
       // Professional Info
+      systemOfMedicine: profileData.systemOfMedicine || "Modern Medicine",
+
       specialty: profileData.specialty,
 
       licenseNumber: profileData.licenseNumber,

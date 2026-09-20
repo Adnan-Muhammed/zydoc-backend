@@ -9,13 +9,14 @@ export class DoctorsPublicController {
     // console log commented 
     
     try {
-      const { search, specialty, consultationType, minRating, page, limit, sortBy, sortOrder } = req.query;
+      const { search, specialty, consultationType, minRating, systemOfMedicine, page, limit, sortBy, sortOrder } = req.query;
       
       const filters = {
         search,
         specialty, 
         consultationType,
-        minRating
+        minRating,
+        systemOfMedicine
       };
 
       const options = {

@@ -1,6 +1,6 @@
 
 // src/infrastructure/database/models/DoctorProfile.js 
-import mongoose from "mongoose";
+import mongoose from "mongoose"; 
 
 // Sub-document for clean qualification layout indexing
 const qualificationSchema = new mongoose.Schema(
@@ -35,6 +35,13 @@ const doctorSchema = new mongoose.Schema(
       type: String, 
       trim: true,
       index: { unique: true, partialFilterExpression: { phone: { $type: "string" } } }
+    },
+    systemOfMedicine: {
+      type: String,
+      enum: ['Modern Medicine', 'Homeopathy', 'Ayurveda', 'Dentistry', 'Psychology'],
+      default: 'Modern Medicine',
+      required: true,
+      index: true,
     },
     specialty: {
       type: String,
@@ -168,6 +175,7 @@ const doctorSchema = new mongoose.Schema(
 // Performance indexes
 doctorSchema.index({ verificationStatus: 1 });
 doctorSchema.index({ specialty: 1 });
+doctorSchema.index({ systemOfMedicine: 1, specialty: 1 });
 doctorSchema.index({ rating: -1 });
 
 export default mongoose.model("Doctor", doctorSchema);

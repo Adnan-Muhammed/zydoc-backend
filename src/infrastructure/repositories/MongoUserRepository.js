@@ -371,6 +371,7 @@ export class MongoUserRepository extends UserRepository {
       entity.workingHours = profile.workingHours;
       entity.slotDuration = profile.slotDuration || 15;
       entity.specialty = profile.specialty;
+      entity.systemOfMedicine = profile.systemOfMedicine || "Modern Medicine";
       entity.yearsOfExperience = profile.yearsOfExperience;
       entity.bio = profile.bio;
       entity.phone = profile.phone;
@@ -618,7 +619,7 @@ export class MongoUserRepository extends UserRepository {
 
 
   async getPublicDoctors(filters = {}, options = {}) {
-    const { search, specialty, consultationType, minRating } = filters;
+    const { search, specialty, consultationType, minRating, systemOfMedicine } = filters;
     const { page = 1, limit = 10, sortBy = "rating", sortOrder = "desc" } = options;
 
     // Strictly fetch only doctors whose account is active and verified
@@ -632,6 +633,10 @@ export class MongoUserRepository extends UserRepository {
       _id: { $in: activeProfileIds },
       verificationStatus: "approved",
     };
+
+    if (systemOfMedicine && systemOfMedicine !== "all") {
+      query.systemOfMedicine = systemOfMedicine;
+    }
 
     if (specialty) {
       query.specialty = { $regex: new RegExp(specialty, "i") };
@@ -713,6 +718,7 @@ export class MongoUserRepository extends UserRepository {
       email: emailMap[p._id.toString()] || "",
       phone: p.phone,
       specialty: p.specialty,
+      systemOfMedicine: p.systemOfMedicine || "Modern Medicine",
       yearsOfExperience: p.yearsOfExperience,
       bio: p.bio,
       avatarUrl: p.avatarUrl,
@@ -761,6 +767,7 @@ export class MongoUserRepository extends UserRepository {
       email: sharedUser ? sharedUser.email : "",
       phone: doctorProfile.phone,
       specialty: doctorProfile.specialty,
+      systemOfMedicine: doctorProfile.systemOfMedicine || "Modern Medicine",
       yearsOfExperience: doctorProfile.yearsOfExperience,
       bio: doctorProfile.bio,
       avatarUrl: doctorProfile.avatarUrl,
@@ -791,6 +798,7 @@ export class MongoUserRepository extends UserRepository {
       email: sharedUser.email,
       phone: p.phone,
       specialty: p.specialty,
+      systemOfMedicine: p.systemOfMedicine || "Modern Medicine",
       yearsOfExperience: p.yearsOfExperience,
       bio: p.bio,
       avatarUrl: p.avatarUrl,
