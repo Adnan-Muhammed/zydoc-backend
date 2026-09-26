@@ -109,37 +109,34 @@ export function getDoctorTimezone(doctor) {
 
 /**
  * Proportional late join grace period (in minutes) based on slot duration.
- * - 10m slot: 3m grace (7m left)
- * - 15m - 20m slot: 5m grace (10-15m left)
- * - 30m slot: 8m grace (22m left)
- * - 40m slot: 10m grace (30m left)
- * - 60m+ slot: 15m grace (45m+ left)
+ * Formula: MIN(Duration * 25%, 10 minutes)
+ * Master Table:
+ * - 10m slot: 2m grace (Last Join = 9:02)
+ * - 15m slot: 4m grace (Last Join = 9:04)
+ * - 20m slot: 5m grace (Last Join = 9:05)
+ * - 25m slot: 6m grace (Last Join = 9:06)
+ * - 30m slot: 8m grace (Last Join = 9:08)
+ * - 45m slot: 10m grace (Last Join = 9:10, capped at 10m)
  */
 export function getLateJoinGraceMinutes(durationMinutes = 15) {
   const dur = Number(durationMinutes) || 15;
-  if (dur <= 10) return 3;
-  if (dur <= 20) return 5;
-  if (dur <= 30) return 8;
-  if (dur <= 45) return 10;
-  return 15;
+  const standardGraces = { 10: 2, 15: 4, 20: 5, 25: 6, 30: 8, 45: 10 };
+  if (standardGraces[dur] !== undefined) {
+    return standardGraces[dur];
+  }
+  return Math.min(10, Math.round(dur * 0.25));
 }
 
 /**
  * Returns the timestamp in milliseconds past which booking is locked/disallowed.
- * - Short slots (<= 15m): 3 minutes BEFORE slot start time.
- * - Long slots (> 15m): Allowed in-progress up until slotStart + grace period.
+ * Equation: LastBookingAt = LastJoinAt - 5 minutes
+ *           LastBookingAt = ScheduledStartAt + LateJoinGrace - 5 minutes
  */
 export function getBookingCutoffMs(slotStartUTC, slotDuration = 15) {
   const startMs = slotStartUTC instanceof Date ? slotStartUTC.getTime() : new Date(slotStartUTC).getTime();
   const dur = Number(slotDuration) || 15;
-
-  if (dur <= 15) {
-    // Must be booked at least 3 minutes before slot start
-    return startMs - 3 * 60 * 1000;
-  }
-  // In-progress booking allowed up until the late join grace period ends
   const graceMinutes = getLateJoinGraceMinutes(dur);
-  return startMs + graceMinutes * 60 * 1000;
+  return startMs + (graceMinutes - 5) * 60 * 1000;
 }
 
 /**
@@ -150,5 +147,59 @@ export function getRemainingSlotMinutes(slotStartUTC, slotDuration = 15, now = n
   const endMs = startMs + (Number(slotDuration) || 15) * 60 * 1000;
   const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
   return Math.max(0, Math.round((endMs - nowMs) / 60000));
+}
+
+/**
+ * Calculates consultation timing boundaries and start state based on
+ * appointment-timing-rules.md (Part 1 & Master Table).
+ *
+ * States:
+ * - EARLY: actualStartMs < scheduledStartMs - 60s
+ * - ON_TIME: within 60s tolerance of scheduledStartMs
+ * - LATE: actualStartMs > scheduledStartMs + 60s
+ *
+ * Duration End:
+ * - Early Start: DurationEndAt = ActualStartAt + Duration
+ * - On-Time:     DurationEndAt = ActualStartAt + Duration
+ * - Late Start:  DurationEndAt = MIN(ActualStartAt + Duration, ScheduledEndAt)
+ *
+ * Max Extension / Actual End:
+ * - ActualEndAt = DurationEndAt + MaxExtensionMinutes (capped at slot limits)
+ */
+export function calculateConsultationTiming({
+  actualStartMs,
+  scheduledStartMs,
+  scheduledEndMs,
+  durationMinutes = 10,
+  maxExtensionMinutes = 10,
+}) {
+  const durationMs = durationMinutes * 60 * 1000;
+  const maxExtensionMs = maxExtensionMinutes * 60 * 1000;
+  const diffFromScheduledStart = actualStartMs - scheduledStartMs;
+
+  let sessionStatus = 'ON_TIME';
+  // 1-minute tolerance window for On-Time
+  if (diffFromScheduledStart < -60 * 1000) {
+    sessionStatus = 'EARLY';
+  } else if (diffFromScheduledStart > 60 * 1000) {
+    sessionStatus = 'LATE';
+  }
+
+  let durationEndMs;
+  if (sessionStatus === 'EARLY' || sessionStatus === 'ON_TIME') {
+    durationEndMs = actualStartMs + durationMs;
+  } else {
+    // Late Start: ends at MIN(actualStart + duration, scheduledEnd)
+    durationEndMs = Math.min(actualStartMs + durationMs, scheduledEndMs);
+  }
+
+  const actualEndMs = durationEndMs + maxExtensionMs;
+
+  return {
+    sessionStatus,
+    durationEndMs,
+    actualEndMs,
+    durationMinutes,
+  };
 }
 

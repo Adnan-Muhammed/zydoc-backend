@@ -38,7 +38,7 @@ export class PatientDoctorsController {
             lastConsultationType: { $first: "$consultationType" }
           }
         },
-        {
+        { 
           $lookup: {
             from: "doctors",
             localField: "_id",
@@ -64,6 +64,8 @@ export class PatientDoctorsController {
               ]
             },
             specialty: { $ifNull: ["$doctorProfile.specialty", "General Practice"] },
+            systemOfMedicine: { $ifNull: ["$doctorProfile.systemOfMedicine", "Modern Medicine"] },
+            qualifications: { $ifNull: ["$doctorProfile.qualifications", []] },
             avatarUrl: { $ifNull: ["$doctorProfile.avatarUrl", ""] },
             yearsOfExperience: { $ifNull: ["$doctorProfile.yearsOfExperience", 0] },
             rating: { $ifNull: ["$doctorProfile.rating", 0] },
@@ -123,7 +125,7 @@ export class PatientDoctorsController {
       // 1. Retrieve Doctor Profile
       const doctor = await Doctor.findById(doctorObjId)
         .select(
-          "firstName lastName specialty avatarUrl yearsOfExperience rating reviewCount consultationSettings qualifications workingHours bio phone timezone"
+          "firstName lastName specialty systemOfMedicine avatarUrl yearsOfExperience rating reviewCount consultationSettings qualifications workingHours bio phone timezone"
         )
         .lean();
 
@@ -138,7 +140,7 @@ export class PatientDoctorsController {
       })
         .sort({ appointmentDate: -1, createdAt: -1 })
         .select(
-          "appointmentDate appointmentTime consultationType status fee feeBreakdown prescriptions consultationFiles clinicalNotes createdAt"
+          "appointmentDate appointmentTime consultationType status fee feeBreakdown prescriptions consultationFiles createdAt"
         )
         .lean();
 
@@ -151,6 +153,7 @@ export class PatientDoctorsController {
           firstName: doctor.firstName,
           lastName: doctor.lastName || "",
           specialty: doctor.specialty || "General Practice",
+          systemOfMedicine: doctor.systemOfMedicine || "Modern Medicine",
           avatarUrl: doctor.avatarUrl || "",
           yearsOfExperience: doctor.yearsOfExperience || 0,
           rating: doctor.rating || 0,
@@ -171,7 +174,6 @@ export class PatientDoctorsController {
           fee: app.feeBreakdown?.totalFee || app.fee || 0,
           prescriptions: app.prescriptions || [],
           consultationFiles: app.consultationFiles || [],
-          clinicalAdvice: app.clinicalNotes || "",
           createdAt: app.createdAt
         }))
       });

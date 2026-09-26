@@ -1,9 +1,20 @@
-import { getLateJoinGraceMinutes } from "../../../infrastructure/utils/timeUtils.js";
 import {
+  getLateJoinGraceMinutes,
+  calculateConsultationTiming,
+} from "../../../infrastructure/utils/timeUtils.js";
+import {
+  EARLY_JOIN_MINUTES,
+  EARLY_START_MINUTES,
   MAX_EXTENSION_MINUTES,
   WRAP_UP_COUNTDOWN_SECONDS,
   DEFAULT_BASE_DURATION_MINUTES,
 } from '../../../config/videoCallConfig.js';
+ 
+// ── Role-specific early-join boundaries ─────────────────────────────────────
+// Patient : can enter the waiting room from  scheduledStart - EARLY_JOIN_MINUTES  (10 min)
+// Doctor  : can join the call room only from scheduledStart - EARLY_START_MINUTES (7 min)
+// This ensures the doctor cannot enter before the early-start window that is
+// already shown to the patient on the waiting screen.
 
 // In-memory store to keep track of sessionStartedAt for each room/appointment.
 // Since it's in-memory, if the server restarts, ongoing calls will lose their timer sync.
@@ -54,6 +65,7 @@ export class JoinRoomUseCase {
     if (!appointmentId) return;
     
     const roomId = `video_${appointmentId}`;
+    const normalizedRole = role ? role.toLowerCase() : '';
 
     // --- MULTIPLE TABS / DUPLICATE SESSION VALIDATION ---
     if (userId) {
@@ -97,7 +109,7 @@ export class JoinRoomUseCase {
             return; // Block join
           }
 
-          if (['completed', 'no-show', 'cancelled', 'cancelled-by-doctor', 'disputed', 'refunded'].includes(appointment.status)) {
+          if (['completed', 'no-show', 'cancelled', 'cancelled_by_doctor', 'disputed', 'refunded'].includes(appointment.status)) {
             // Emit error directly to the socket trying to join
             if (this.signalingGateway.socket?.id) {
               this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", { message: "This consultation has already ended." });
@@ -137,15 +149,29 @@ export class JoinRoomUseCase {
             scheduledStartMs = scheduledStartDate.getTime();
             
             // Check if they are joining for the very first time
-            const normalizedRole = role ? role.toLowerCase() : '';
             const hasJoinedBefore = normalizedRole === 'doctor' ? !!appointment.doctorJoinedAt : !!appointment.patientJoinedAt;
 
-            // Block early join if trying to join more than 15 minutes before scheduled time
-            if (currentMs < scheduledStartMs - 15 * 60000) {
-              const errMsg = { message: "You can only join the consultation up to 15 minutes before the scheduled time." };
-              if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
-              if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
-              return; // Block join
+            // ── Role-specific early-join boundary check ───────────────────
+            // Doctor  → may only join from the early-start window (scheduledStart - EARLY_START_MINUTES)
+            // Patient → may join from the broader waiting-room window (scheduledStart - EARLY_JOIN_MINUTES)
+            if (normalizedRole === 'doctor') {
+              const doctorEarlyStartMs = scheduledStartMs - EARLY_START_MINUTES * 60000;
+              if (currentMs < doctorEarlyStartMs) {
+                const earlyStartTime = new Date(doctorEarlyStartMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const errMsg = { message: `You can join this consultation from ${earlyStartTime} (${EARLY_START_MINUTES} minutes before the scheduled time).` };
+                if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+                if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
+                return; // Block doctor join before early-start window
+              }
+            } else {
+              // Patient: blocked before EARLY_JOIN_MINUTES (10 min) window
+              if (currentMs < scheduledStartMs - EARLY_JOIN_MINUTES * 60000) {
+                const earlyJoinTime = new Date(scheduledStartMs - EARLY_JOIN_MINUTES * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const errMsg = { message: `The consultation room opens ${EARLY_JOIN_MINUTES} minutes before the scheduled time (at ${earlyJoinTime}).` };
+                if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+                if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
+                return; // Block patient join before early-join window
+              }
             }
 
             // Determine proportional late entry cutoff time
@@ -162,37 +188,60 @@ export class JoinRoomUseCase {
                 lateJoinCutoffMs = scheduledStartMs + cutoffMinsForMessage * 60000;
             }
 
-            // Block initial join if past the late entry cutoff
-            if (!hasJoinedBefore && currentMs >= lateJoinCutoffMs) {
-              const errMsg = { message: `The late entry grace period (${cutoffMinsForMessage} mins) has expired for this consultation.` };
-              if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
-              if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
-              return; // Block join
+            // ── Patient Join & Re-join Eligibility (Rule 4) ────────────────────
+            // Case A: Active consultation re-join (doctor and patient already connected before)
+            if (appointment.hasOverlapped && appointment.status !== 'completed') {
+              const baseEndMs = appointment.scheduledEndAt
+                ? new Date(appointment.scheduledEndAt).getTime()
+                : (scheduledStartMs + 15 * 60000);
+              
+              if (currentMs > baseEndMs) {
+                const errMsg = {
+                  message: "The scheduled slot time for this consultation has ended. Re-joining is no longer possible."
+                };
+                if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+                if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
+                return;
+              }
+            } else if (normalizedRole === 'patient') {
+              // Case B: Initial waiting phase (doctor and patient have not yet met)
+              // Strict cut-off: access is blocked past lateJoinCutoffAt
+              if (currentMs >= lateJoinCutoffMs) {
+                const errMsg = {
+                  message: hasJoinedBefore
+                    ? `The consultation window has closed (late-join cutoff: ${cutoffMinsForMessage} min after scheduled start). Re-joining is no longer possible.`
+                    : `The late entry grace period (${cutoffMinsForMessage} mins) has expired for this consultation.`
+                };
+                if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+                if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
+                return; // Block
+              }
             }
-            
-            // Enforce consultation duration window (from scheduledEndAt or default duration)
-            const maxSessionEndMs = appointment.scheduledEndAt 
-              ? new Date(appointment.scheduledEndAt).getTime() 
-              : scheduledStartMs + 60 * 60000;
 
-            if (currentMs >= maxSessionEndMs) {
-              const errMsg = { message: "The consultation window has expired." };
-              if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
-              if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
-              return; // Block join
+            // ── Doctor Attendance Notice (Rule 1 & 3) ─────────────────────────
+            // If the patient joins during their valid window but the doctor has
+            // not joined yet, surface a notice with the 20-30s buffer explanation.
+            if (normalizedRole === 'patient' && currentMs >= scheduledStartMs && !appointment.doctorJoinedAt) {
+              console.warn(`[JoinRoomUseCase] Doctor ${appointment.doctorId} has not joined yet for appointment ${appointmentId}. Patient ${userId} is present.`);
+              if (this.signalingGateway.socket?.id) {
+                this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "doctor_absence_warning", {
+                  appointmentId,
+                  message: "The doctor has been notified. Doctors are allowed a 20–30s buffer time to join. If the doctor does not attend within the allowed time, a full refund will be automatically issued.",
+                  lateJoinCutoffAt: appointment.lateJoinCutoffAt || new Date(lateJoinCutoffMs),
+                });
+              }
             }
           }
 
           let hasUpdates = false;
           if (scheduledStartMs > 0) {
             const getJoinStatus = (joinMs, startMs) => {
-                const diffMins = (joinMs - startMs) / 60000;
-                if (diffMins < -3) return "EARLY";
-                if (diffMins > 4) return "LATE";
+                const diff = joinMs - startMs;
+                if (diff < -60000) return "EARLY";
+                if (diff > 60000) return "LATE";
                 return "ON_TIME";
             };
             
-            const normalizedRole = role ? role.toLowerCase() : '';
             if (normalizedRole === 'doctor' && !appointment.doctorJoinedAt) {
                 appointment.doctorJoinedAt = currentTime;
                 appointment.doctorJoinStatus = getJoinStatus(currentMs, scheduledStartMs);
@@ -202,6 +251,23 @@ export class JoinRoomUseCase {
                 appointment.patientJoinStatus = getJoinStatus(currentMs, scheduledStartMs);
                 hasUpdates = true;
             }
+          }
+
+          // ── Track Entry in Array Structure (Rule 2.2) ───────────────────────
+          if (!appointment.patientAttendanceLogs) appointment.patientAttendanceLogs = [];
+          if (!appointment.doctorAttendanceLogs) appointment.doctorAttendanceLogs = [];
+
+          if (normalizedRole === 'patient') {
+            appointment.patientAttendanceLogs.push({
+              joinedAt: currentTime,
+              isValidWait: false,
+            });
+            hasUpdates = true;
+          } else if (normalizedRole === 'doctor') {
+            appointment.doctorAttendanceLogs.push({
+              joinedAt: currentTime,
+            });
+            hasUpdates = true;
           }
           
           if (hasUpdates) {
@@ -225,9 +291,8 @@ export class JoinRoomUseCase {
 
     this.signalingGateway.joinRoom(roomId);
 
-    // If patient joins first, notify the doctor
-    const normalizedRole = role ? role.toLowerCase() : '';
-    if (numClients === 0 && normalizedRole === 'patient') {
+    // If patient joins and doctor is not in the room, notify the doctor with 20-30s buffer
+    if (normalizedRole === 'patient') {
       try {
         if (this.appointmentRepository) {
           const appointment = await this.appointmentRepository.findById(appointmentId);
@@ -241,11 +306,14 @@ export class JoinRoomUseCase {
               SharedUser.findById(userId).populate('profileId')
             ]);
 
-            if (doctorUser) {
+            const participants = roomActiveParticipants.get(roomId);
+            const isDoctorInRoom = doctorUser && participants && participants.has(doctorUser._id.toString());
+
+            if (doctorUser && !isDoctorInRoom) {
               const pProfile = patientUser?.profileId || {};
               const patientName = `${pProfile.firstName || ''} ${pProfile.lastName || ''}`.trim() || patientUser?.googleName || "A patient";
 
-              // Standard "patient arrived" notification for the current room
+              // Real-time alert to doctor with 20-30s buffer
               this.signalingGateway.emitToUser(
                 doctorUser._id.toString(),
                 "patient-arrived",
@@ -255,7 +323,9 @@ export class JoinRoomUseCase {
                   patientName, 
                   patientType: appointment.patientType,
                   appointmentTime: appointment.appointmentTime,
-                  appointmentDate: appointment.appointmentDate
+                  appointmentDate: appointment.appointmentDate,
+                  bufferSeconds: 30,
+                  message: `${patientName} has entered the consultation room. Please join within 30 seconds.`
                 }
               );
 
@@ -297,19 +367,30 @@ export class JoinRoomUseCase {
                 const delayUntilNextSlot = Math.max(0, scheduledStartMs - nowMs);
                 
                 timers.wrapUpTimeout = setTimeout(() => {
-                  console.log(`[JoinRoomUseCase] Exact slot time reached for next patient. Triggering 1-minute WrapUp in ${doctorActiveRoomId}.`);
-                  this.signalingGateway.broadcastToRoom(doctorActiveRoomId, "server_wrap_up_warning", { remainingSeconds: 60 });
+                  console.log(`[JoinRoomUseCase] Exact slot time reached for next patient. Triggering ${WRAP_UP_COUNTDOWN_SECONDS}-second auto-cut in ${doctorActiveRoomId}.`);
+                  this.signalingGateway.broadcastToRoom(doctorActiveRoomId, "server_wrap_up_warning", {
+                    reason: "next_patient_time_reached",
+                    remainingSeconds: WRAP_UP_COUNTDOWN_SECONDS,
+                    patientName,
+                    appointmentId,
+                    appointmentTime: appointment.appointmentTime,
+                    isNextPatientWaiting: true,
+                  });
                   
                   timers.endCallTimeout = setTimeout(async () => {
-                     console.log(`[JoinRoomUseCase] 1-minute WrapUp completed for room ${doctorActiveRoomId}. Auto-terminating.`);
-                     this.signalingGateway.broadcastToRoom(doctorActiveRoomId, "force_end_call", { reason: "next_slot_started" });
+                     console.log(`[JoinRoomUseCase] Auto-cut countdown completed for room ${doctorActiveRoomId}. Terminating.`);
+                     this.signalingGateway.broadcastToRoom(doctorActiveRoomId, "force_end_call", {
+                       reason: "next_patient_live",
+                       appointmentId,
+                       patientName,
+                     });
                      const activeApptId = doctorActiveRoomId.replace('video_', '');
                      try {
                        const Appointment = mongoose.model('Appointment');
                        await Appointment.updateOne({ _id: activeApptId }, { status: 'completed' });
                      } catch(e) {}
                      clearRoomTimers(doctorActiveRoomId);
-                  }, 60000);
+                  }, WRAP_UP_COUNTDOWN_SECONDS * 1000);
                 }, delayUntilNextSlot);
               }
               // ───────────────────────────────────────────────────────────────
@@ -390,6 +471,10 @@ export class JoinRoomUseCase {
                   appointment.sessionStartedAt = new Date(sessionStartedAt);
                   appointment.participantsConnectedAt = appointment.sessionStartedAt;
                   appointment.roomId = roomId;
+                  // ── Overlap flag (Rule 1.3) ─────────────────────────────────
+                  // Both participants have connected → mark the successful overlap.
+                  // This is the durable DB source of truth for re-join eligibility.
+                  appointment.hasOverlapped = true;
 
                   const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
                   if (timeStr) {
@@ -399,14 +484,14 @@ export class JoinRoomUseCase {
                     if (modifier?.toUpperCase() === "AM" && hours === 12) hours = 0;
                     scheduledStart.setHours(hours, minutes, 0, 0);
 
-                    const diffMins = (appointment.sessionStartedAt.getTime() - scheduledStart.getTime()) / 60000;
-                    if (diffMins < -3) {
-                      appointment.sessionStartStatus = "EARLY";
-                    } else if (diffMins > 4) {
-                      appointment.sessionStartStatus = "LATE";
-                    } else {
-                      appointment.sessionStartStatus = "ON_TIME";
-                    }
+                    const timing = calculateConsultationTiming({
+                      actualStartMs: appointment.sessionStartedAt.getTime(),
+                      scheduledStartMs: scheduledStart.getTime(),
+                      scheduledEndMs: scheduledStart.getTime() + baseDurationMinutes * 60000,
+                      durationMinutes: baseDurationMinutes,
+                      maxExtensionMinutes: MAX_EXTENSION_MINUTES,
+                    });
+                    appointment.sessionStartStatus = timing.sessionStatus;
                   }
 
                   await appointment.save();
@@ -489,73 +574,68 @@ export class JoinRoomUseCase {
               const maxExtensionEnd = currentEnd + MAX_EXTENSION_MINUTES * 60000;
               
               for (const app of overlappingAppointments) {
-                const [appTimeStr, appModifier] = (app.appointmentTime || "").trim().split(/\s+/);
-                if (appTimeStr) {
+                let appStartTime = null;
+                if (app.scheduledStartAt) {
+                  appStartTime = new Date(app.scheduledStartAt).getTime();
+                } else {
+                  const [appTimeStr, appModifier] = (app.appointmentTime || "").trim().split(/\s+/);
+                  if (appTimeStr) {
                     let [appHours, appMinutes] = appTimeStr.split(":");
                     let h = parseInt(appHours, 10);
                     const m = parseInt(appMinutes, 10) || 0;
                     if (appModifier) {
-                        if (appModifier.toUpperCase() === "PM" && h < 12) h += 12;
-                        if (appModifier.toUpperCase() === "AM" && h === 12) h = 0;
+                      if (appModifier.toUpperCase() === "PM" && h < 12) h += 12;
+                      if (appModifier.toUpperCase() === "AM" && h === 12) h = 0;
                     }
                     const appStart = new Date(appointment.appointmentDate);
                     appStart.setHours(h, m, 0, 0);
-                    
-                    const appStartTime = appStart.getTime();
-                    // Next slot overlaps extension time
-                    if (appStartTime < maxExtensionEnd && appStartTime >= currentEnd - 5 * 60000) {
-                        isNextSlotBooked = true;
-                        nextAppointmentId = app._id ? app._id.toString() : null;
-                        nextSlotStartTimeMs = appStartTime;
-                        // Resolve the consultation type for the frontend timer logic
-                        nextAppointmentType = ['offline', 'physical'].includes(app.consultationType)
-                          ? 'offline'
-                          : 'online';
-                        
-                        if (app.patientJoinedAt) {
-                          nextSlotStatus = 'PATIENT_PRESENT';
-                        } else {
-                          nextSlotStatus = 'PATIENT_LATE';
-                        }
-                        break;
+                    appStartTime = appStart.getTime();
+                  }
+                }
+
+                if (appStartTime) {
+                  // Next slot overlaps extension time
+                  if (appStartTime < maxExtensionEnd && appStartTime >= currentEnd - 5 * 60000) {
+                    isNextSlotBooked = true;
+                    nextAppointmentId = app._id ? app._id.toString() : null;
+                    nextSlotStartTimeMs = appStartTime;
+                    // Resolve the consultation type for the frontend timer logic
+                    nextAppointmentType = ['offline', 'physical'].includes(app.consultationType)
+                      ? 'offline'
+                      : 'online';
+
+                    // Next patient is ONLY present if actively waiting in the waiting room right now
+                    const waitingKey = `waiting_${app._id.toString()}`;
+                    const waitingGroup = waitingRoomParticipants.get(waitingKey);
+                    if (waitingGroup && waitingGroup.size > 0) {
+                      nextSlotStatus = 'PATIENT_PRESENT';
+                    } else {
+                      nextSlotStatus = 'PATIENT_LATE';
                     }
+                    break;
+                  }
                 }
               }
             } catch (err) {
               console.error("[JoinRoomUseCase] Error checking next slot:", err);
             }
 
-            // Calculate precise end times based on Session Start Status
-            let sessionStatus = "ON_TIME";
+            // Calculate precise end times based on the 3 states from appointment-timing-rules.md
             const sessionStartMs = new Date(sessionStartedAt).getTime();
             const scheduledStartMs = scheduledStartDate.getTime();
             const scheduledEndMs = scheduledEndTimeObj.getTime();
-            const sessionDiffMins = (sessionStartMs - scheduledStartMs) / 60000;
-            
-            if (sessionDiffMins < -3) {
-              sessionStatus = "EARLY";
-            } else if (sessionDiffMins > 4) {
-              sessionStatus = "LATE";
-            }
 
-            // Calculate precise end times based on Session Start Status
-            let primaryEndTimeMs;
-            let absoluteHardLimitMs;
+            const timing = calculateConsultationTiming({
+              actualStartMs: sessionStartMs,
+              scheduledStartMs,
+              scheduledEndMs,
+              durationMinutes: baseDurationMinutes,
+              maxExtensionMinutes: MAX_EXTENSION_MINUTES,
+            });
 
-            const standardDurationMs = baseDurationMinutes * 60000;
-            const maxExtensionMs = MAX_EXTENSION_MINUTES * 60000; // configurable extension allowance
-
-            if (sessionStatus === "EARLY") {
-                primaryEndTimeMs = sessionStartMs + standardDurationMs;
-                absoluteHardLimitMs = primaryEndTimeMs + maxExtensionMs;
-            } else if (sessionStatus === "ON_TIME") {
-                primaryEndTimeMs = scheduledEndMs;
-                absoluteHardLimitMs = scheduledEndMs + maxExtensionMs;
-            } else {
-                // LATE start
-                primaryEndTimeMs = Math.min(sessionStartMs + standardDurationMs, scheduledEndMs);
-                absoluteHardLimitMs = primaryEndTimeMs + maxExtensionMs;
-            }
+            const sessionStatus = timing.sessionStatus;
+            let primaryEndTimeMs = timing.durationEndMs;
+            let absoluteHardLimitMs = timing.actualEndMs;
 
             // Bug 3 & 4: Cap hard limit strictly based on next appointment
             try {
@@ -570,24 +650,29 @@ export class JoinRoomUseCase {
 
               let earliestNextStartTimeMs = null;
               for (const app of upcomingNext) {
-                const [appTimeStr, appModifier] = (app.appointmentTime || "").trim().split(/\s+/);
-                if (appTimeStr) {
+                let nextStartTimeMs = null;
+                if (app.scheduledStartAt) {
+                  nextStartTimeMs = new Date(app.scheduledStartAt).getTime();
+                } else {
+                  const [appTimeStr, appModifier] = (app.appointmentTime || "").trim().split(/\s+/);
+                  if (appTimeStr) {
                     let [appHours, appMinutes] = appTimeStr.split(":");
                     let h = parseInt(appHours, 10);
                     const m = parseInt(appMinutes, 10) || 0;
                     if (appModifier) {
-                        if (appModifier.toUpperCase() === "PM" && h < 12) h += 12;
-                        if (appModifier.toUpperCase() === "AM" && h === 12) h = 0;
+                      if (appModifier.toUpperCase() === "PM" && h < 12) h += 12;
+                      if (appModifier.toUpperCase() === "AM" && h === 12) h = 0;
                     }
                     const nextStart = new Date(appointment.appointmentDate);
                     nextStart.setHours(h, m, 0, 0);
-                    const nextStartTimeMs = nextStart.getTime();
+                    nextStartTimeMs = nextStart.getTime();
+                  }
+                }
 
-                    if (nextStartTimeMs > primaryEndTimeMs) {
-                      if (!earliestNextStartTimeMs || nextStartTimeMs < earliestNextStartTimeMs) {
-                        earliestNextStartTimeMs = nextStartTimeMs;
-                      }
-                    }
+                if (nextStartTimeMs && nextStartTimeMs > primaryEndTimeMs) {
+                  if (!earliestNextStartTimeMs || nextStartTimeMs < earliestNextStartTimeMs) {
+                    earliestNextStartTimeMs = nextStartTimeMs;
+                  }
                 }
               }
 
@@ -628,8 +713,8 @@ export class JoinRoomUseCase {
             const startMs = new Date(sessionStartedAt).getTime();
             
             // 1. Strict Hard Limit Timeout (uses MAX_EXTENSION_MINUTES from config)
-            // Absolute hard limit is calculated as sessionStartedAt + baseDurationMinutes + MAX_EXTENSION_MINUTES
-            const strictAbsoluteLimitMs = startMs + (baseDurationMinutes + MAX_EXTENSION_MINUTES) * 60000;
+            // Absolute hard limit uses accurate 3-state calculated boundary (ActualEnd = DurationEnd + MAX_EXTENSION_MINUTES)
+            const strictAbsoluteLimitMs = absoluteHardLimitMs || (startMs + (baseDurationMinutes + MAX_EXTENSION_MINUTES) * 60000);
             const delayUntilStrictHardLimit = Math.max(0, strictAbsoluteLimitMs - nowMs);
             
             timers.hardLimitTimeout = setTimeout(async () => {
@@ -638,29 +723,40 @@ export class JoinRoomUseCase {
               try {
                 const mongoose = await import('mongoose');
                 const Appointment = mongoose.model('Appointment');
-                await Appointment.updateOne({ _id: appointmentId }, { status: 'completed' });
+                await Appointment.updateOne({ _id: appointmentId }, { status: 'completed', sessionEndedAt: new Date() });
               } catch(e) {}
               clearRoomTimers(roomId);
             }, delayUntilStrictHardLimit);
 
-            // 2. Next Patient Exact Time Auto-Cut (If they are ALREADY in the waiting room when this call starts)
-            if (nextSlotStartTimeMs && nextSlotStatus === 'PATIENT_PRESENT') {
+            // 2. Next Patient Exact Time Auto-Cut (ONLY if they are ACTUALLY waiting in the waiting room right now)
+            const nextWaitingKey = nextAppointmentId ? `waiting_${nextAppointmentId}` : null;
+            const isActuallyWaiting = Boolean(nextWaitingKey && waitingRoomParticipants.has(nextWaitingKey) && waitingRoomParticipants.get(nextWaitingKey).size > 0);
+
+            if (nextSlotStartTimeMs && nextSlotStatus === 'PATIENT_PRESENT' && isActuallyWaiting) {
               const delayUntilNextSlot = Math.max(0, nextSlotStartTimeMs - nowMs);
               
               timers.wrapUpTimeout = setTimeout(() => {
-                console.log(`[JoinRoomUseCase] Exact slot time reached for next patient. Triggering 1-minute WrapUp in ${roomId}.`);
-                this.signalingGateway.broadcastToRoom(roomId, "server_wrap_up_warning", { remainingSeconds: 60 });
+                console.log(`[JoinRoomUseCase] Exact slot time reached for next patient. Triggering ${WRAP_UP_COUNTDOWN_SECONDS}-second auto-cut in ${roomId}.`);
+                this.signalingGateway.broadcastToRoom(roomId, "server_wrap_up_warning", {
+                  reason: "next_patient_time_reached",
+                  remainingSeconds: WRAP_UP_COUNTDOWN_SECONDS,
+                  appointmentId: nextAppointmentId,
+                  isNextPatientWaiting: true,
+                });
                 
                 timers.endCallTimeout = setTimeout(async () => {
-                   console.log(`[JoinRoomUseCase] 1-minute WrapUp completed for room ${roomId}. Auto-terminating.`);
-                   this.signalingGateway.broadcastToRoom(roomId, "force_end_call", { reason: "next_slot_started" });
+                   console.log(`[JoinRoomUseCase] Auto-cut countdown completed for room ${roomId}. Terminating.`);
+                   this.signalingGateway.broadcastToRoom(roomId, "force_end_call", {
+                     reason: "next_patient_live",
+                     appointmentId: nextAppointmentId,
+                   });
                    try {
                      const mongoose = await import('mongoose');
                      const Appointment = mongoose.model('Appointment');
                      await Appointment.updateOne({ _id: appointmentId }, { status: 'completed' });
                    } catch(e) {}
                    clearRoomTimers(roomId);
-                }, 60000);
+                }, WRAP_UP_COUNTDOWN_SECONDS * 1000);
               }, delayUntilNextSlot);
             }
             // ─────────────────────────────────────────────────────────────

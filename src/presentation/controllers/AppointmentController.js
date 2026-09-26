@@ -1261,7 +1261,9 @@ export const getAppointmentById = async (req, res) => {
             return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
         }
 
-        const appointment = await Appointment.findById(id).populate('patientId', 'firstName lastName googleName email profileId');
+        const appointment = await Appointment.findById(id)
+            .populate('patientId', 'firstName lastName googleName email profileId')
+            .populate('doctorId', 'firstName lastName specialty qualifications profileImage');
         
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });

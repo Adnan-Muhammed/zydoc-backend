@@ -54,7 +54,7 @@ export class CancelAppointmentUseCase {
         throw err;
       }
 
-      appointment.status = 'cancelled-by-doctor';
+      appointment.status = 'cancelled_by_doctor';
       appointment.cancellationReason = reason || 'Cancelled by doctor';
       appointment.cancelledAt = new Date();
       appointment.lockedBy = undefined;

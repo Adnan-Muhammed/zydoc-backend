@@ -1,5 +1,6 @@
 // src/application/usecases/doctor/UpdateDoctorProfile.js
 import { validateWorkingHours } from "../../../infrastructure/utils/scheduleValidator.js";
+import { deduceSystemOfMedicine } from "../../../infrastructure/utils/systemOfMedicineHelper.js";
 
 export class UpdateDoctorProfile {
   constructor(userRepository) {
@@ -111,7 +112,10 @@ export class UpdateDoctorProfile {
       bio: profileData.bio,
 
       // Professional Info
-      systemOfMedicine: profileData.systemOfMedicine || "Modern Medicine",
+      systemOfMedicine: deduceSystemOfMedicine(
+        profileData.qualifications,
+        profileData.systemOfMedicine
+      ),
 
       specialty: profileData.specialty,
 

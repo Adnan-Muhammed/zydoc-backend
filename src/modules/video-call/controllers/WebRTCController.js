@@ -6,11 +6,13 @@ import { EndRoomUseCase } from '../use-cases/EndRoomUseCase.js';
 import { ExtendRoomUseCase } from '../use-cases/ExtendRoomUseCase.js';
 import { JoinWaitingRoomUseCase } from '../use-cases/JoinWaitingRoomUseCase.js';
 import { waitingRoomParticipants, roomState, activeTimers, clearRoomTimers } from '../use-cases/JoinRoomUseCase.js';
-import { WRAP_UP_COUNTDOWN_SECONDS } from '../../../config/videoCallConfig.js';
+import { WRAP_UP_COUNTDOWN_SECONDS, RECONNECTION_GRACE_SECONDS } from '../../../config/videoCallConfig.js';
 import { MongoAppointmentRepository } from '../../../infrastructure/repositories/MongoAppointmentRepository.js';
 import { MongoTransactionRepository } from '../../../infrastructure/repositories/MongoTransactionRepository.js';
 
 let isEvaluatorRunning = false;
+// Map to track temporary participant disconnects: key: `${roomId}_${userId}` -> { timeoutId, disconnectedAt }
+const disconnectionGraceTimers = new Map();
 
 export class WebRTCController { 
   static handle(socket, io) {
@@ -38,6 +40,22 @@ export class WebRTCController {
     });
 
     socket.on("join_room", ({ appointmentId }) => {
+      const roomId = appointmentId ? `video_${appointmentId}` : socket.currentVideoRoom;
+      const userKey = `${roomId}_${socket.userId}`;
+
+      // Rule 6: Check if user is reconnecting within the 30-second grace buffer
+      if (disconnectionGraceTimers.has(userKey)) {
+        console.log(`[WebRTCController] User ${socket.userId} reconnected to ${roomId} within ${RECONNECTION_GRACE_SECONDS}s grace window! Cancelling leave.`);
+        const item = disconnectionGraceTimers.get(userKey);
+        clearTimeout(item.timeoutId);
+        disconnectionGraceTimers.delete(userKey);
+
+        io.to(roomId).emit("peer_reconnected", {
+          userId: socket.userId,
+          userRole: socket.userRole,
+        });
+      }
+
       joinRoom.execute(appointmentId, socket.userId, socket.userRole);
     });
 
@@ -96,6 +114,11 @@ export class WebRTCController {
 
     socket.on("leave_room", ({ appointmentId } = {}) => {
       const roomId = appointmentId ? `video_${appointmentId}` : socket.currentVideoRoom;
+      const userKey = `${roomId}_${socket.userId}`;
+      if (disconnectionGraceTimers.has(userKey)) {
+        clearTimeout(disconnectionGraceTimers.get(userKey).timeoutId);
+        disconnectionGraceTimers.delete(userKey);
+      }
       leaveRoom.execute(roomId, socket.userRole, socket.userId, socket.id);
     });
 
@@ -121,10 +144,36 @@ export class WebRTCController {
       }
     });
 
-    // Handle peer disconnect for WebRTC specific cleanup
+    // Handle peer disconnect for WebRTC with Rule 6: 30-Second Reconnection Grace Buffer
     socket.on("disconnect", () => {
-      // For edge case: if they close the tab, LeaveRoomUseCase handles it
-      leaveRoom.execute(socket.currentVideoRoom, socket.userRole, socket.userId, socket.id);
+      const roomId = socket.currentVideoRoom;
+      const userId = socket.userId;
+      const userRole = socket.userRole;
+      const socketId = socket.id;
+
+      if (!roomId || !userId) return;
+
+      console.log(`[WebRTCController] User ${userId} (${userRole}) disconnected from ${roomId}. Starting ${RECONNECTION_GRACE_SECONDS}s reconnection grace buffer...`);
+
+      // Notify other participant in the room that peer connection dropped temporarily
+      socket.to(roomId).emit("peer_temporarily_disconnected", {
+        userId,
+        userRole,
+        gracePeriodSeconds: RECONNECTION_GRACE_SECONDS,
+      });
+
+      const userKey = `${roomId}_${userId}`;
+      if (disconnectionGraceTimers.has(userKey)) {
+        clearTimeout(disconnectionGraceTimers.get(userKey).timeoutId);
+      }
+
+      const timeoutId = setTimeout(() => {
+        disconnectionGraceTimers.delete(userKey);
+        console.log(`[WebRTCController] Reconnection grace period expired (${RECONNECTION_GRACE_SECONDS}s) for user ${userId} in ${roomId}. Executing full room leave.`);
+        leaveRoom.execute(roomId, userRole, userId, socketId);
+      }, RECONNECTION_GRACE_SECONDS * 1000);
+
+      disconnectionGraceTimers.set(userKey, { timeoutId, disconnectedAt: Date.now() });
     });
 
   }
@@ -160,13 +209,18 @@ export class WebRTCController {
             // existing VideoCallRoom.tsx listener handles it without any change.
             io.to(roomId).emit('server_wrap_up_warning', {
               reason: 'next_patient_time_reached',
-              remainingSeconds: WRAP_UP_COUNTDOWN_SECONDS
+              remainingSeconds: WRAP_UP_COUNTDOWN_SECONDS,
+              appointmentId: nextApptId,
+              isNextPatientWaiting: true,
             });
 
             // Schedule strict hard-cutoff
             timers.endCallTimeout = setTimeout(async () => {
                console.log(`[TimerEvaluator] Wrap-up finished. Auto-terminating room ${roomId}.`);
-               io.to(roomId).emit('force_end_call', { reason: 'override_timeout' });
+               io.to(roomId).emit('force_end_call', {
+                 reason: 'next_patient_live',
+                 appointmentId: nextApptId,
+               });
                clearRoomTimers(roomId);
                roomState.delete(roomId);
                
@@ -182,6 +236,6 @@ export class WebRTCController {
           }
         }
       }
-    }, 2000); // Check every 2 seconds for high precision
+    }, 1000); // Check every second for exact precision with the 20-second auto-cut standard
   }
 }

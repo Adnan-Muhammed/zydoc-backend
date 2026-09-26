@@ -1,6 +1,8 @@
 // import mongoose from "mongoose";
 // import Appointment from "./src/infrastructure/database/models/Appointment.js";
 
+const { after } = require("node:test");
+
 // const MONGODB_URI = "mongodb://127.0.0.1:27017/zydoc-app";
 
 // function formatTimeOnly(dateObj) {
@@ -65,9 +67,11 @@
 
 // console.log(formatted);
 
-
-
-const date = new Date("2026-08-19T04:01:13.685+00:00");
+// 11:45:00 pm    appointment
+// 11:38:30 pm start at
+// 11:58:30 pm end at after extend time
+// 11:38:00 pm timer start for auto end call and the message is  there is next patient waiting in waiting room similiar message but the fact is there is no one is waiting  
+const date = new Date("2026-09-23T18:28:30.670+00:00");
 
 const time = date.toLocaleTimeString("en-IN", {
   hour: "2-digit",
@@ -85,3 +89,5 @@ console.log(time);
 console.log("_____________________");
 console.log("_____________________");
 console.log("_____________________");
+
+

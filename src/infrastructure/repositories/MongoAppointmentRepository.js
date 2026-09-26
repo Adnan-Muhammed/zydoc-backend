@@ -9,6 +9,7 @@ import { razorpayRefund } from "../services/RazorpayService.js";
 import Transaction from "../database/models/Transaction.js";
 import { MongoWalletRepository } from "./MongoWalletRepository.js";
 import { CreditWalletUseCase } from "../../application/usecases/wallet/CreditWalletUseCase.js";
+import { MIN_CONSULTATION_DURATION_SECONDS } from "../../config/videoCallConfig.js";
 
 export class MongoAppointmentRepository extends AppointmentRepository {
     constructor(creditWalletUseCase = null) {
@@ -170,7 +171,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     async findByDoctorIdWithPatientDetails(doctorId) {
         return await Appointment.find({ 
             doctorId,
-            status: { $in: ['scheduled', 'completed', 'no-show', 'cancelled', 'cancelled-by-doctor', 'disputed', 'refunded'] }
+            status: { $in: ['scheduled', 'completed', 'no-show', 'cancelled', 'cancelled_by_doctor', 'disputed', 'refunded'] }
         })
             .populate({
                 path: 'patientId',
@@ -186,7 +187,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     async findDoctorHistoryWithPatientDetails(doctorId) {
         return await Appointment.find({
             doctorId,
-            status: { $in: ['completed', 'no-show', 'cancelled', 'cancelled-by-doctor', 'refunded'] }
+            status: { $in: ['completed', 'no-show', 'cancelled', 'cancelled_by_doctor', 'refunded'] }
         })
             .populate({
                 path: 'patientId',
@@ -228,50 +229,183 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             const slotExactUTC = app.scheduledStartAt ? new Date(app.scheduledStartAt) : getSlotExactUTC(dateStr, app.appointmentTime, app.doctorTimezone || 'Asia/Kolkata');
             const slotEndUTC = app.scheduledEndAt ? new Date(app.scheduledEndAt) : new Date(slotExactUTC.getTime() + slotDurationMins * 60 * 1000);
 
+            // Proportional late entry cutoff time
+            let lateJoinCutoffUTC;
+            if (app.lateJoinCutoffAt) {
+                lateJoinCutoffUTC = new Date(app.lateJoinCutoffAt);
+            } else {
+                let graceMins = 5;
+                if (slotDurationMins <= 10) graceMins = 3;
+                else if (slotDurationMins <= 20) graceMins = 5;
+                else if (slotDurationMins <= 30) graceMins = 8;
+                else if (slotDurationMins <= 45) graceMins = 10;
+                else graceMins = 15;
+                lateJoinCutoffUTC = new Date(slotExactUTC.getTime() + graceMins * 60 * 1000);
+            }
+
+            // Doctor Missed condition: patient attended with valid >=60s wait during valid window, but doctor NEVER joined,
+            // and the late-join cutoff has passed! Evaluated immediately without waiting for slotEndUTC.
+            const hasValidPatientWait = (app.patientAttendanceLogs || []).some(log => {
+                if (!log.joinedAt) return false;
+                const joinMs = new Date(log.joinedAt).getTime();
+                const leaveMs = log.leftAt ? new Date(log.leftAt).getTime() : now.getTime();
+                
+                // STRICT RULE 2: Calculate overlap strictly within the window [Scheduled Start, Late Join Cut-off]
+                const windowStartMs = slotExactUTC.getTime();
+                const windowEndMs = lateJoinCutoffUTC.getTime();
+                
+                const overlapStart = Math.max(joinMs, windowStartMs);
+                const overlapEnd = Math.min(leaveMs, windowEndMs);
+                
+                if (overlapEnd > overlapStart) {
+                    const overlapSeconds = (overlapEnd - overlapStart) / 1000;
+                    if (overlapSeconds >= 60) return true;
+                }
+                return false;
+            });
+
+            if (hasValidPatientWait && !app.doctorJoinedAt) {
+                return now > lateJoinCutoffUTC;
+            }
+
+            // Standard no-show (patient failed to show up, or hit-and-run exit <60s): wait until slot officially ends
             return now > slotEndUTC;
         });
 
         for (const app of expiredAppointments) {
-            if (app.patientJoinedAt && !app.doctorJoinedAt) {
-                console.log(`[lazyUpdateNoShows] Doctor No-Show detected for online appointment ${app._id}. Marking as doctor_missed and auto-refunding to wallet...`);
-                const refundAmount = app.feeBreakdown?.totalFee || app.fee || 0;
-                app.status = 'doctor_missed';
-                app.paymentStatus = 'refunded';
-                app.refundAmount = refundAmount;
-                app.refundedAt = new Date();
-                app.cancellationReason = 'Doctor failed to attend the scheduled consultation';
-                await app.save();
+            // Recalculate exactly as above for the loop
+            const dateStr = app.appointmentDate ? new Date(app.appointmentDate).toISOString().split('T')[0] : null;
+            const slotDurationMins = Number(app.doctorId?.slotDuration) || 15;
+            const slotExactUTC = app.scheduledStartAt ? new Date(app.scheduledStartAt) : getSlotExactUTC(dateStr, app.appointmentTime, app.doctorTimezone || 'Asia/Kolkata');
+            
+            let lateJoinCutoffUTC;
+            if (app.lateJoinCutoffAt) {
+                lateJoinCutoffUTC = new Date(app.lateJoinCutoffAt);
+            } else {
+                let graceMins = 5;
+                if (slotDurationMins <= 10) graceMins = 3;
+                else if (slotDurationMins <= 20) graceMins = 5;
+                else if (slotDurationMins <= 30) graceMins = 8;
+                else if (slotDurationMins <= 45) graceMins = 10;
+                else graceMins = 15;
+                lateJoinCutoffUTC = new Date(slotExactUTC.getTime() + graceMins * 60 * 1000);
+            }
 
-                // Auto-credit refund to patient wallet
-                try {
-                    const creditUseCase = this.creditWalletUseCase || new CreditWalletUseCase(new MongoWalletRepository());
-                    await creditUseCase.execute({
-                        patientId: app.patientId,
-                        amount: refundAmount,
-                        source: 'DOCTOR_MISSED',
-                        description: `Auto-refund for doctor missed appointment on ${new Date(app.appointmentDate).toDateString()}`,
-                        appointmentId: app._id,
-                    });
-                } catch (creditErr) {
-                    console.error(`[lazyUpdateNoShows] Error crediting wallet for doctor missed appointment ${app._id}:`, creditErr);
+            const hasValidPatientWait = (app.patientAttendanceLogs || []).some(log => {
+                if (!log.joinedAt) return false;
+                const joinMs = new Date(log.joinedAt).getTime();
+                const leaveMs = log.leftAt ? new Date(log.leftAt).getTime() : now.getTime();
+                
+                const windowStartMs = slotExactUTC.getTime();
+                const windowEndMs = lateJoinCutoffUTC.getTime();
+                
+                const overlapStart = Math.max(joinMs, windowStartMs);
+                const overlapEnd = Math.min(leaveMs, windowEndMs);
+                
+                if (overlapEnd > overlapStart) {
+                    const overlapSeconds = (overlapEnd - overlapStart) / 1000;
+                    if (overlapSeconds >= 60) return true;
                 }
+                return false;
+            });
 
-                // Cancel doctor's platform payout transaction
-                try {
-                    await Transaction.findOneAndUpdate(
-                        { appointmentId: app._id },
-                        { $set: { status: 'refunded' } }
-                    );
-                } catch (txErr) {
-                    console.error(`[lazyUpdateNoShows] Error updating transaction for ${app._id}:`, txErr);
+            let has3MinContinuous = false;
+            const doctorLogs = app.doctorAttendanceLogs || [];
+            const patientLogs = app.patientAttendanceLogs || [];
+            const checkNow = new Date().getTime();
+
+            for (const dLog of doctorLogs) {
+                if (!dLog.joinedAt) continue;
+                const dJoin = new Date(dLog.joinedAt).getTime();
+                const dLeave = dLog.leftAt ? new Date(dLog.leftAt).getTime() : checkNow;
+
+                for (const pLog of patientLogs) {
+                    if (!pLog.joinedAt) continue;
+                    const pJoin = new Date(pLog.joinedAt).getTime();
+                    const pLeave = pLog.leftAt ? new Date(pLog.leftAt).getTime() : checkNow;
+
+                    const overlapStart = Math.max(dJoin, pJoin);
+                    const overlapEnd = Math.min(dLeave, pLeave);
+
+                    if (overlapEnd > overlapStart) {
+                        const overlapSeconds = (overlapEnd - overlapStart) / 1000;
+                        if (overlapSeconds >= MIN_CONSULTATION_DURATION_SECONDS) {
+                            has3MinContinuous = true;
+                            break;
+                        }
+                    }
                 }
-            } else if (!app.patientJoinedAt) {
-                // Patient failed to show up -> mark standard 'no-show'
+                if (has3MinContinuous) break;
+            }
+
+            // PATIENT REFUND RULE:
+            // If patient met 1-min requirement during valid window, BUT doctor failed to complete 3-min continuous consultation.
+            if (hasValidPatientWait && (!app.doctorJoinedAt || !has3MinContinuous)) {
+                await this.markDoctorMissed(app);
+            } else if (!hasValidPatientWait) {
+                // EXCLUSION RULE:
+                // If patient was never present for 1-minute block, they DO NOT get a refund.
+                // The fee goes to the doctor (transaction will be handled/allowed to complete or remain).
+                // However, the consultation was not completed properly, so we mark it no-show.
+                // The transaction status might be processed differently, but let's just mark it as no-show.
                 app.status = 'no-show';
+                app.doctorFault = false;
                 await app.save();
-                console.log(`[lazyUpdateNoShows] Patient missed appointment ${app._id}, marked as no-show.`);
+                console.log(`[lazyUpdateNoShows] Patient appointment ${app._id} marked as no-show (patient did not meet 1-minute valid wait).`);
+            } else {
+                // If patient had a valid wait, AND doctor completed 3-mins, but for some reason it's still here
+                // (e.g. they completed it but never clicked end call and the cron swept it up).
+                // We should probably just mark it as completed.
+                app.status = 'completed';
+                await app.save();
+                console.log(`[lazyUpdateNoShows] Appointment ${app._id} swept and auto-completed (both criteria met).`);
             }
         }
+    }
+
+    /**
+     * Confirms doctor missed consultation, sets status to 'doctor_missed',
+     * issues full auto-refund to patient wallet, and cancels doctor payout transaction.
+     */
+    async markDoctorMissed(appointment) {
+        if (!appointment) return;
+        const app = typeof appointment === 'string' ? await Appointment.findById(appointment) : appointment;
+        if (!app || app.status === 'doctor_missed' || app.status === 'completed' || app.status === 'cancelled') return;
+
+        console.log(`[markDoctorMissed] Doctor No-Show confirmed for online appointment ${app._id}. Marking as doctor_missed and auto-refunding to wallet...`);
+        const refundAmount = app.feeBreakdown?.totalFee || app.fee || 0;
+        app.status = 'doctor_missed';
+        app.paymentStatus = 'refunded';
+        app.refundAmount = refundAmount;
+        app.refundedAt = new Date();
+        app.doctorFault = true;
+        app.cancellationReason = 'Doctor failed to attend the scheduled consultation';
+        await app.save();
+
+        // Auto-credit refund to patient wallet
+        try {
+            const creditUseCase = this.creditWalletUseCase || new CreditWalletUseCase(new MongoWalletRepository());
+            await creditUseCase.execute({
+                patientId: app.patientId,
+                amount: refundAmount,
+                source: 'DOCTOR_MISSED',
+                description: `Auto-refund for doctor missed appointment on ${new Date(app.appointmentDate).toDateString()}`,
+                appointmentId: app._id,
+            });
+        } catch (creditErr) {
+            console.error(`[markDoctorMissed] Error crediting wallet for doctor missed appointment ${app._id}:`, creditErr);
+        }
+
+        // Cancel doctor's platform payout transaction
+        try {
+            await Transaction.findOneAndUpdate(
+                { appointmentId: app._id },
+                { $set: { status: 'refunded' } }
+            );
+        } catch (txErr) {
+            console.error(`[markDoctorMissed] Error updating transaction for ${app._id}:`, txErr);
+        }
+        return app;
     }
 
     async findDisputedAppointments() {
@@ -413,7 +547,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                 pending: ["scheduled", "locked", "pending"],
                 ongoing: ["in_progress"],
                 completed: ["completed"],
-                cancelled: ["cancelled", "cancelled-by-doctor", "doctor_missed", "no-show"],
+                cancelled: ["cancelled", "cancelled_by_doctor", "doctor_missed", "no-show"],
                 refunded: ["refunded", "refund_pending", "disputed"],
                 disputed: ["disputed"],
             };
@@ -707,7 +841,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             Appointment.countDocuments({ status: "in_progress" }),
             Appointment.countDocuments({ status: { $in: ["scheduled", "locked"] } }),
             Appointment.countDocuments({
-                status: { $in: ["cancelled", "cancelled-by-doctor", "doctor_missed"] },
+                status: { $in: ["cancelled", "cancelled_by_doctor", "doctor_missed"] },
             }),
             Appointment.countDocuments({
                 status: { $in: ["refunded", "refund_pending", "disputed"] },

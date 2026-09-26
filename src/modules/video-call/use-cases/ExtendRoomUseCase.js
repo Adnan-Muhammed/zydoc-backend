@@ -111,7 +111,10 @@ export class ExtendRoomUseCase {
         if (diffMins > 0) baseDurationMinutes = diffMins;
       }
 
-      const baseDurationEndMs = sessionStartMs + (baseDurationMinutes * 60000);
+      let baseDurationEndMs = sessionStartMs + (baseDurationMinutes * 60000);
+      if (appointment.scheduledEndAt) {
+        baseDurationEndMs = Math.max(baseDurationEndMs, new Date(appointment.scheduledEndAt).getTime());
+      }
 
       // ────────────────────────────────────────────────────────────────────────
       // STEP 3: Find the next appointment for this doctor
@@ -128,6 +131,8 @@ export class ExtendRoomUseCase {
 
       let nextSlotStartMs = null;
       let nextAppointmentId = null;
+      let nextOfflineApp = null;
+      let nextOfflineStartMs = null;
 
       for (const app of upcomingAppointments) {
         let appStartMs = null;
@@ -147,9 +152,19 @@ export class ExtendRoomUseCase {
         }
 
         if (appStartMs && appStartMs > baseDurationEndMs) {
-          if (!nextSlotStartMs || appStartMs < nextSlotStartMs) {
-            nextSlotStartMs = appStartMs;
-            nextAppointmentId = app._id?.toString();
+          const consultType = (app.consultationType || '').toLowerCase();
+          const isOffline = consultType === 'offline' || consultType === 'physical';
+
+          if (isOffline) {
+            if (!nextOfflineStartMs || appStartMs < nextOfflineStartMs) {
+              nextOfflineStartMs = appStartMs;
+              nextOfflineApp = app;
+            }
+          } else {
+            if (!nextSlotStartMs || appStartMs < nextSlotStartMs) {
+              nextSlotStartMs = appStartMs;
+              nextAppointmentId = app._id?.toString();
+            }
           }
         }
       }
@@ -181,11 +196,15 @@ export class ExtendRoomUseCase {
 
       // Check 2: Did JoinWaitingRoomUseCase set a constraint on this room's state?
       const roomCurrentState = roomState.get(roomId);
-      if (roomCurrentState?.nextPatientWaitingSlotMs) {
-        isNextPatientWaiting = true;
-        const stateConstraint = roomCurrentState.nextPatientWaitingSlotMs;
-        if (!constrainedDeadlineMs || stateConstraint < constrainedDeadlineMs) {
-          constrainedDeadlineMs = stateConstraint;
+      if (roomCurrentState?.nextPatientWaitingSlotMs && roomCurrentState?.nextPatientAppointmentId) {
+        const nextWaitingKey = `waiting_${roomCurrentState.nextPatientAppointmentId}`;
+        const nextWaitingGroup = waitingRoomParticipants.get(nextWaitingKey);
+        if (nextWaitingGroup && nextWaitingGroup.size > 0) {
+          isNextPatientWaiting = true;
+          const stateConstraint = roomCurrentState.nextPatientWaitingSlotMs;
+          if (!constrainedDeadlineMs || stateConstraint < constrainedDeadlineMs) {
+            constrainedDeadlineMs = stateConstraint;
+          }
         }
       }
 
@@ -197,6 +216,16 @@ export class ExtendRoomUseCase {
           isNextPatientWaiting = true;
           constrainedDeadlineMs = nextSlotStartMs + (WRAP_UP_COUNTDOWN_SECONDS * 1000);
         }
+      }
+
+      // Guard: If next patient is already waiting live and their scheduled start time has arrived, deny extension
+      if (isNextPatientWaiting && nextSlotStartMs && Date.now() >= nextSlotStartMs) {
+        console.log(`[ExtendRoomUseCase] Next patient is already waiting live for their slot. Extension denied.`);
+        this.signalingGateway.broadcastToRoom(roomId, 'extension_denied', {
+          reason: 'next_patient_due',
+          message: 'Cannot extend — the next patient is already waiting live for their scheduled consultation.',
+        });
+        return;
       }
 
       // ────────────────────────────────────────────────────────────────────────
@@ -287,16 +316,24 @@ export class ExtendRoomUseCase {
 
         const remainingUntilDeadline = Math.max(1, Math.ceil((extensionDeadlineMs - nowMs) / 1000));
 
-        console.log(`[ExtendRoomUseCase] Already past wrap-up trigger. Starting ${remainingUntilDeadline}s wrap-up NOW.`);
+        let currentlyWaiting = isNextPatientWaiting;
+        if (nextAppointmentId) {
+          const wg = waitingRoomParticipants.get(`waiting_${nextAppointmentId}`);
+          currentlyWaiting = Boolean(wg && wg.size > 0);
+        }
+
+        console.log(`[ExtendRoomUseCase] Already past wrap-up trigger. Starting ${remainingUntilDeadline}s wrap-up NOW. Waiting patient: ${currentlyWaiting}`);
 
         this.signalingGateway.broadcastToRoom(roomId, 'server_wrap_up_warning', {
+          reason: currentlyWaiting ? 'next_patient_waiting' : 'max_extension_reached',
           remainingSeconds: remainingUntilDeadline,
+          isNextPatientWaiting: currentlyWaiting,
         });
 
         timers.endCallTimeout = setTimeout(async () => {
           console.log(`[ExtendRoomUseCase] Wrap-up completed for room ${roomId}. Auto-terminating.`);
           this.signalingGateway.broadcastToRoom(roomId, 'force_end_call', {
-            reason: isNextPatientWaiting ? 'next_patient_waiting' : 'max_extension_reached',
+            reason: currentlyWaiting ? 'next_patient_waiting' : 'max_extension_reached',
           });
           try {
             await AppointmentModel.updateOne({ _id: appointmentId }, { status: 'completed' });
@@ -318,16 +355,24 @@ export class ExtendRoomUseCase {
           if (state?.wrapUpTriggered) return;
           state.wrapUpTriggered = true;
 
-          console.log(`[ExtendRoomUseCase] Wrap-up triggered for room ${roomId}.`);
+          let currentlyWaiting = isNextPatientWaiting;
+          if (nextAppointmentId) {
+            const wg = waitingRoomParticipants.get(`waiting_${nextAppointmentId}`);
+            currentlyWaiting = Boolean(wg && wg.size > 0);
+          }
+
+          console.log(`[ExtendRoomUseCase] Wrap-up triggered for room ${roomId}. Waiting patient: ${currentlyWaiting}`);
 
           this.signalingGateway.broadcastToRoom(roomId, 'server_wrap_up_warning', {
+            reason: currentlyWaiting ? 'next_patient_waiting' : 'max_extension_reached',
             remainingSeconds: WRAP_UP_COUNTDOWN_SECONDS,
+            isNextPatientWaiting: currentlyWaiting,
           });
 
           timers.endCallTimeout = setTimeout(async () => {
             console.log(`[ExtendRoomUseCase] Wrap-up completed for room ${roomId}. Auto-terminating.`);
             this.signalingGateway.broadcastToRoom(roomId, 'force_end_call', {
-              reason: isNextPatientWaiting ? 'next_patient_waiting' : 'max_extension_reached',
+              reason: currentlyWaiting ? 'next_patient_waiting' : 'max_extension_reached',
             });
             try {
               await AppointmentModel.updateOne({ _id: appointmentId }, { status: 'completed' });
@@ -352,6 +397,7 @@ export class ExtendRoomUseCase {
         extensionDurationSeconds,
         isConstrainedByNextPatient: isNextPatientWaiting,
         wrapUpCountdownSeconds: WRAP_UP_COUNTDOWN_SECONDS,
+        upcomingOfflineAppointment: nextOfflineApp,
       });
 
       console.log(`[ExtendRoomUseCase] Extension granted for appointment ${appointmentId}. Deadline: ${new Date(extensionDeadlineMs).toISOString()}, Constrained: ${isNextPatientWaiting}.`);

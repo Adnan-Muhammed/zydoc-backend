@@ -1702,7 +1702,7 @@ export class MongoUserRepository extends UserRepository {
                     {
                       $in: [
                         "$status",
-                        ["cancelled", "cancelled-by-doctor", "doctor_missed"],
+                        ["cancelled", "cancelled_by_doctor", "doctor_missed"],
                       ],
                     },
                     1,
@@ -1822,7 +1822,7 @@ export class MongoUserRepository extends UserRepository {
     });
     const cancelledAppointments = await Appointment.countDocuments({
       patientId: sharedUser._id,
-      status: { $in: ["cancelled", "cancelled-by-doctor", "doctor_missed"] },
+      status: { $in: ["cancelled", "cancelled_by_doctor", "doctor_missed"] },
     });
 
     return {

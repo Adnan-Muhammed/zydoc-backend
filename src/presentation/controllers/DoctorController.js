@@ -9,6 +9,7 @@
 //     try {
 //       const userId = req.user?.id;
 import { validateWorkingHours } from "../../infrastructure/utils/scheduleValidator.js";
+import { deduceSystemOfMedicine, normalizeSystemOfMedicine } from "../../infrastructure/utils/systemOfMedicineHelper.js";
 import Appointment from "../../infrastructure/database/models/Appointment.js";
 import SharedUser from "../../infrastructure/database/models/SharedUser.js";
 
@@ -111,7 +112,13 @@ export class DoctorController {
     }
 
     async updateBasicInfo(req, res) {
-        return this._handlePatch(req, res, (req) => req.body);
+        return this._handlePatch(req, res, (req) => {
+            const body = { ...req.body };
+            if (body.systemOfMedicine) {
+                body.systemOfMedicine = normalizeSystemOfMedicine(body.systemOfMedicine) || body.systemOfMedicine;
+            }
+            return body;
+        });
     }
 
     async updateConsultation(req, res) {
@@ -154,7 +161,13 @@ export class DoctorController {
                 }
             }
 
-            return { qualifications };
+            const patchPayload = { qualifications };
+            const deducedSystem = deduceSystemOfMedicine(qualifications);
+            if (deducedSystem) {
+                patchPayload.systemOfMedicine = deducedSystem;
+            }
+
+            return patchPayload;
         });
     }
 

@@ -43,7 +43,7 @@ export class MongoAnalyticsRepository extends AnalyticsRepository {
       Appointment.aggregate([
         {
           $match: {
-            status: { $nin: ["cancelled", "cancelled-by-doctor", "refunded", "expired", "available"] },
+            status: { $nin: ["cancelled", "cancelled_by_doctor", "refunded", "expired", "available"] },
             paymentStatus: { $in: ["paid", "direct"] },
           },
         },
@@ -141,7 +141,7 @@ export class MongoAnalyticsRepository extends AnalyticsRepository {
         completed: overallMap["completed"] || 0,
         scheduled: overallMap["scheduled"] || 0,
         refunded: overallMap["refunded"] || 0,
-        cancelled: (overallMap["cancelled"] || 0) + (overallMap["cancelled-by-doctor"] || 0),
+        cancelled: (overallMap["cancelled"] || 0) + (overallMap["cancelled_by_doctor"] || 0),
       },
     };
   }
@@ -190,7 +190,7 @@ export class MongoAnalyticsRepository extends AnalyticsRepository {
     }
 
     const matchStage = {
-      status: { $nin: ["cancelled", "cancelled-by-doctor", "refunded", "expired", "available"] },
+      status: { $nin: ["cancelled", "cancelled_by_doctor", "refunded", "expired", "available"] },
       paymentStatus: { $in: ["paid", "direct"] },
     };
 
@@ -619,7 +619,7 @@ export class MongoAnalyticsRepository extends AnalyticsRepository {
       if (isCancelled) {
         totalCancelledCount += 1;
         if (status === "cancelled") cancellationReasonsMap["Patient Cancelled"] += 1;
-        else if (status === "cancelled-by-doctor" || status === "doctor_missed")
+        else if (status === "cancelled_by_doctor" || status === "doctor_missed")
           cancellationReasonsMap["Doctor Cancelled / Missed"] += 1;
         else if (status === "no-show") cancellationReasonsMap["Patient No-Show"] += 1;
         else cancellationReasonsMap["Refunded / Disputed"] += 1;

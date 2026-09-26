@@ -1,6 +1,7 @@
 
 // src/infrastructure/database/models/DoctorProfile.js 
 import mongoose from "mongoose"; 
+import { deduceSystemOfMedicine, normalizeSystemOfMedicine } from "../../utils/systemOfMedicineHelper.js";
 
 // Sub-document for clean qualification layout indexing
 const qualificationSchema = new mongoose.Schema(
@@ -169,8 +170,22 @@ const doctorSchema = new mongoose.Schema(
       accountHolderName: { type: String, default: "" },
     },
   },
-  { timestamps: true },
+  { timestamps: true }
 );
+
+// Auto-normalize and deduce systemOfMedicine from qualifications if missing or inferred
+doctorSchema.pre("validate", function () {
+  const currentNormalized = normalizeSystemOfMedicine(this.systemOfMedicine);
+  if (this.qualifications && this.qualifications.length > 0) {
+    if (!currentNormalized) {
+      this.systemOfMedicine = deduceSystemOfMedicine(this.qualifications);
+    } else {
+      this.systemOfMedicine = currentNormalized;
+    }
+  } else {
+    this.systemOfMedicine = currentNormalized || "Modern Medicine";
+  }
+});
 
 // Performance indexes
 doctorSchema.index({ verificationStatus: 1 });

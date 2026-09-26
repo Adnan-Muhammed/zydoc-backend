@@ -50,7 +50,7 @@ const appointmentSchema = new mongoose.Schema(
         "completed",
         "no-show",
         "cancelled",
-        "cancelled-by-doctor",
+        "cancelled_by_doctor",
         "cancelled_by_admin",
         "doctor_missed",
         "disputed",
@@ -285,6 +285,57 @@ const appointmentSchema = new mongoose.Schema(
 
     sessionEndedAt: {
       type: Date,
+    },
+
+    // ── Re-join Eligibility Flag (Rule 1.3) ───────────────────────────────────
+    // Set to true the first time both the doctor and patient simultaneously
+    // occupy the same room (sessionStartedAt recorded). Once true, the patient
+    // may freely re-join until scheduledEndAt unless status === 'completed'.
+    hasOverlapped: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    // ── Attendance Tracking (Array Structure) ─────────────────────────────────
+    // Tracks every entry and exit with duration to validate the 1-minute mandatory
+    // patient wait and prevent "hit-and-run" flash exits.
+    patientAttendanceLogs: [
+      {
+        joinedAt: { type: Date, required: true },
+        leftAt: { type: Date },
+        durationSeconds: { type: Number, default: 0 },
+        isValidWait: { type: Boolean, default: false }, // true if duration >= 60 seconds
+      },
+    ],
+
+    doctorAttendanceLogs: [
+      {
+        joinedAt: { type: Date, required: true },
+        leftAt: { type: Date },
+        durationSeconds: { type: Number, default: 0 },
+      },
+    ],
+
+    // Logged as true when doctor fails mandatory presence after a valid patient wait
+    doctorFault: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Call extension tracking
+    isExtended: {
+      type: Boolean,
+      default: false,
+    },
+
+    extensionDeadlineAt: {
+      type: Date,
+    },
+
+    extensionConstrainedByNextPatient: {
+      type: Boolean,
+      default: false,
     },
 
     // ── Offline consultation verification ─────────────────────────────────
