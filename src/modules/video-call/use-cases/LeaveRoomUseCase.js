@@ -45,14 +45,28 @@ export class LeaveRoomUseCase {
           const now = new Date();
           const normalizedRole = role ? role.toLowerCase() : '';
 
+          const startMs = appointment.scheduledStartAt ? new Date(appointment.scheduledStartAt).getTime() : 0;
+          let lateJoinCutoffMs = appointment.lateJoinCutoffAt ? new Date(appointment.lateJoinCutoffAt).getTime() : 0;
+          if (!lateJoinCutoffMs && startMs) {
+            lateJoinCutoffMs = startMs + 5 * 60 * 1000;
+          }
+
           // ── Update Attendance Logs (Rule 2.2) ───────────────────────────
           if (normalizedRole === 'patient' && appointment.patientAttendanceLogs?.length > 0) {
             const openLog = [...appointment.patientAttendanceLogs].reverse().find(l => !l.leftAt);
             if (openLog) {
               openLog.leftAt = now;
               openLog.durationSeconds = Math.max(0, Math.round((openLog.leftAt.getTime() - new Date(openLog.joinedAt).getTime()) / 1000));
-              if (openLog.durationSeconds >= 60) {
-                openLog.isValidWait = true;
+              
+              // STRICT RULE: isValidWait is only true if patient was present >= 60 seconds WITHIN [startMs, lateJoinCutoffMs]
+              if (startMs && lateJoinCutoffMs) {
+                const joinMs = new Date(openLog.joinedAt).getTime();
+                const leaveMs = openLog.leftAt.getTime();
+                const overlapStart = Math.max(joinMs, startMs);
+                const overlapEnd = Math.min(leaveMs, lateJoinCutoffMs);
+                openLog.isValidWait = (overlapEnd > overlapStart) && ((overlapEnd - overlapStart) / 1000 >= 60);
+              } else {
+                openLog.isValidWait = false;
               }
             }
           } else if (normalizedRole === 'doctor' && appointment.doctorAttendanceLogs?.length > 0) {
@@ -71,15 +85,18 @@ export class LeaveRoomUseCase {
 
             if (appointment.status !== 'completed' && appointment.status !== 'cancelled' && appointment.status !== 'doctor_missed') {
               const nowMs = Date.now();
-              const startMs = appointment.scheduledStartAt ? new Date(appointment.scheduledStartAt).getTime() : 0;
-              let lateJoinCutoffMs = appointment.lateJoinCutoffAt ? new Date(appointment.lateJoinCutoffAt).getTime() : 0;
-              if (!lateJoinCutoffMs && startMs) {
-                lateJoinCutoffMs = startMs + 5 * 60 * 1000;
-              }
 
+              // STRICT RULE 1 & 2: Evaluate patient wait strictly within [startMs, lateJoinCutoffMs]
               const hasValidPatientWait = appointment.patientAttendanceLogs?.some(log => {
                 if (!log.joinedAt || !startMs || !lateJoinCutoffMs) return false;
                 const joinMs = new Date(log.joinedAt).getTime();
+
+                // If log ended before or at scheduled start, ignore completely
+                if (log.leftAt && new Date(log.leftAt).getTime() <= startMs) return false;
+                // If patient joined before scheduled start and has no leftAt, do not assume they stayed into valid window
+                if (!log.leftAt && joinMs < startMs) return false;
+                if (joinMs >= lateJoinCutoffMs) return false;
+
                 const leaveMs = log.leftAt ? new Date(log.leftAt).getTime() : nowMs;
                 const overlapStart = Math.max(joinMs, startMs);
                 const overlapEnd = Math.min(leaveMs, lateJoinCutoffMs);
@@ -114,33 +131,80 @@ export class LeaveRoomUseCase {
                 if (has3MinContinuous) break;
               }
 
-              if (nowMs >= lateJoinCutoffMs) {
-                if (hasValidPatientWait && (!appointment.doctorJoinedAt || !has3MinContinuous)) {
-                  console.log(`[LeaveRoomUseCase] Valid patient wait verified (≥60s) but doctor failed to complete 3-min consultation for ${appointmentId}. Logging doctorFault and auto-refunding...`);
-                  appointment.doctorFault = true;
-                  if (typeof this.appointmentRepository.markDoctorMissed === 'function') {
-                    await this.appointmentRepository.markDoctorMissed(appointment);
-                  }
-                  if (userId) {
-                    this.signalingGateway.emitToUser(userId, "doctor_missed", {
-                      appointmentId,
-                      message: "The doctor did not complete the consultation. A full refund has been credited to your wallet.",
-                    });
-                  }
-                } else if (!hasValidPatientWait) {
-                  console.log(`[LeaveRoomUseCase] Room empty and cutoff passed for ${appointmentId}. Auto-closing as no-show.`);
-                  appointment.status = 'no-show';
-                  appointment.doctorFault = false;
+              const slotDurationMins = (appointment.scheduledStartAt && appointment.scheduledEndAt)
+                ? Math.round((new Date(appointment.scheduledEndAt) - new Date(appointment.scheduledStartAt)) / 60000)
+                : 15;
+              const slotEndMs = appointment.scheduledEndAt
+                ? new Date(appointment.scheduledEndAt).getTime()
+                : (startMs + slotDurationMins * 60000);
+
+              const hasConsultationStarted = Boolean(
+                appointment.hasOverlapped ||
+                appointment.sessionStartedAt ||
+                (appointment.doctorJoinedAt && appointment.patientJoinedAt)
+              );
+
+              if (hasConsultationStarted) {
+                // Rule 1: Once consultation has started, late cut-off rules no longer apply.
+                // Participants retain the full right to re-join prior to Scheduled End Time (slotEndMs).
+                if (nowMs < slotEndMs) {
+                  appointment.status = 'scheduled';
                   await appointment.save();
+                  console.log(`[LeaveRoomUseCase] Consultation in progress. Participants disconnected prior to slot end (${new Date(slotEndMs).toISOString()}). Retaining scheduled status for re-join.`);
                 } else {
-                  console.log(`[LeaveRoomUseCase] Room empty and cutoff passed. Doctor completed 3 mins but didn't click end. Auto-completing.`);
-                  appointment.status = 'completed';
-                  await appointment.save();
+                  // Slot duration has fully elapsed without explicit doctor completion
+                  if (has3MinContinuous) {
+                    console.log(`[LeaveRoomUseCase] Slot ended and 3-min continuous consultation was met. Auto-completing appointment ${appointmentId}.`);
+                    appointment.status = 'completed';
+                    await appointment.save();
+                  } else if (hasValidPatientWait) {
+                    console.log(`[LeaveRoomUseCase] Slot ended without doctor completing 3-min consultation for ${appointmentId}. Marking doctor_missed.`);
+                    appointment.doctorFault = true;
+                    if (typeof this.appointmentRepository.markDoctorMissed === 'function') {
+                      await this.appointmentRepository.markDoctorMissed(appointment);
+                    }
+                  } else {
+                    appointment.status = 'no-show';
+                    appointment.doctorFault = false;
+                    await appointment.save();
+                  }
                 }
               } else {
-                appointment.status = 'scheduled';
-                await appointment.save();
-                console.log(`[LeaveRoomUseCase] Room empty before cutoff. Kept appointment ${appointmentId} as scheduled.`);
+                // Consultation never started (participants never met in room)
+                if (nowMs >= lateJoinCutoffMs) {
+                  if (hasValidPatientWait && !appointment.doctorJoinedAt) {
+                    console.log(`[LeaveRoomUseCase] Valid patient wait verified but doctor never joined for ${appointmentId}. Marking doctor_missed.`);
+                    appointment.doctorFault = true;
+                    if (typeof this.appointmentRepository.markDoctorMissed === 'function') {
+                      await this.appointmentRepository.markDoctorMissed(appointment);
+                    }
+                    if (userId) {
+                      this.signalingGateway.emitToUser(userId, "doctor_missed", {
+                        appointmentId,
+                        message: "The doctor did not complete the consultation. A full refund has been credited to your wallet.",
+                      });
+                    }
+                  } else if (!hasValidPatientWait) {
+                    console.log(`[LeaveRoomUseCase] Room empty and cutoff passed for un-started ${appointmentId}. Auto-closing as no-show.`);
+                    appointment.status = 'no-show';
+                    appointment.doctorFault = false;
+                    await appointment.save();
+
+                    this.signalingGateway.emitToRoom(roomId, "call_ended", {
+                      appointmentId,
+                      status: 'no-show',
+                      message: "The consultation has ended as a patient no-show."
+                    });
+                    if (appointment.patientId) {
+                      const pId = appointment.patientId._id ? appointment.patientId._id.toString() : appointment.patientId.toString();
+                      this.signalingGateway.emitToUser(pId, "consultation_completed", { appointmentId, status: 'no-show' });
+                    }
+                  }
+                } else {
+                  appointment.status = 'scheduled';
+                  await appointment.save();
+                  console.log(`[LeaveRoomUseCase] Room empty before cutoff. Kept appointment ${appointmentId} as scheduled.`);
+                }
               }
             }
           } else {

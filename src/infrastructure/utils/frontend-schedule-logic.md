@@ -23,10 +23,19 @@ export const isValidGridAlignment = (timeInMins, slotDuration) => {
 export const validateDailyShifts = (onlineShifts, offlineShifts) => {
   let errors = [];
 
+  const processShift = (s, type) => {
+    let startMins = timeToMinutes(s.startTime);
+    let endMins = timeToMinutes(s.endTime);
+    if (s.endTime === '00:00' && startMins >= 0) {
+      endMins = 1440;
+    }
+    return { ...s, type, startMins, endMins };
+  };
+
   // Combine and sort all shifts by start time
   const allShifts = [
-    ...onlineShifts.map(s => ({ ...s, type: 'online', startMins: timeToMinutes(s.startTime), endMins: timeToMinutes(s.endTime) })),
-    ...offlineShifts.map(s => ({ ...s, type: 'offline', startMins: timeToMinutes(s.startTime), endMins: timeToMinutes(s.endTime) }))
+    ...onlineShifts.map(s => processShift(s, 'online')),
+    ...offlineShifts.map(s => processShift(s, 'offline'))
   ].sort((a, b) => a.startMins - b.startMins);
 
   for (let i = 0; i < allShifts.length; i++) {
@@ -87,9 +96,19 @@ export const isValidGridAlignment = (timeInMins, slotDuration) => {
 // Rule 2 & 3: Overlap & Gap Validation
 export const validateDailyShifts = (onlineShifts, offlineShifts) => {
   let errors = [];
+
+  const processShift = (s, type) => {
+    let startMins = timeToMinutes(s.startTime);
+    let endMins = timeToMinutes(s.endTime);
+    if (s.endTime === '00:00' && startMins >= 0) {
+      endMins = 1440;
+    }
+    return { ...s, type, startMins, endMins };
+  };
+
   const allShifts = [
-    ...onlineShifts.map(s => ({ ...s, type: 'online', startMins: timeToMinutes(s.startTime), endMins: timeToMinutes(s.endTime) })),
-    ...offlineShifts.map(s => ({ ...s, type: 'offline', startMins: timeToMinutes(s.startTime), endMins: timeToMinutes(s.endTime) }))
+    ...onlineShifts.map(s => processShift(s, 'online')),
+    ...offlineShifts.map(s => processShift(s, 'offline'))
   ].sort((a, b) => a.startMins - b.startMins);
 
   for (let i = 0; i < allShifts.length; i++) {

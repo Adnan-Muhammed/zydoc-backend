@@ -245,30 +245,67 @@ export class MongoAppointmentRepository extends AppointmentRepository {
 
             // Doctor Missed condition: patient attended with valid >=60s wait during valid window, but doctor NEVER joined,
             // and the late-join cutoff has passed! Evaluated immediately without waiting for slotEndUTC.
+            const windowStartMs = slotExactUTC.getTime();
+            const windowEndMs = lateJoinCutoffUTC.getTime();
+
+            // STRICT RULE 1 & 2:
+            // 1. Exclude Pre-Schedule Time: Any time spent strictly prior to Scheduled Start Time is completely ignored.
+            // 2. Strict Window for Refunds: Patient must be present for >= 1 continuous minute specifically in [Scheduled Start, Late Cut-off].
+            // 3. Early joins that left before or at scheduledStartMs are ignored.
+            //    Unclosed logs starting before scheduledStartMs cannot be assumed to have stayed into the valid window.
             const hasValidPatientWait = (app.patientAttendanceLogs || []).some(log => {
                 if (!log.joinedAt) return false;
                 const joinMs = new Date(log.joinedAt).getTime();
+                
+                // If log ended before or at scheduled start time, ignore completely (Rule 1)
+                if (log.leftAt && new Date(log.leftAt).getTime() <= windowStartMs) {
+                    return false;
+                }
+
+                // If patient joined before scheduled start and left without leftAt recorded,
+                // do NOT assume they stayed into the valid window
+                if (!log.leftAt && joinMs < windowStartMs) {
+                    return false;
+                }
+
+                // If patient joined at or after lateJoinCutoff, no overlap in valid window
+                if (joinMs >= windowEndMs) {
+                    return false;
+                }
+
                 const leaveMs = log.leftAt ? new Date(log.leftAt).getTime() : now.getTime();
-                
-                // STRICT RULE 2: Calculate overlap strictly within the window [Scheduled Start, Late Join Cut-off]
-                const windowStartMs = slotExactUTC.getTime();
-                const windowEndMs = lateJoinCutoffUTC.getTime();
-                
                 const overlapStart = Math.max(joinMs, windowStartMs);
                 const overlapEnd = Math.min(leaveMs, windowEndMs);
-                
+
                 if (overlapEnd > overlapStart) {
                     const overlapSeconds = (overlapEnd - overlapStart) / 1000;
-                    if (overlapSeconds >= 60) return true;
+                    return overlapSeconds >= 60;
                 }
                 return false;
             });
+
+            const hasConsultationStarted = Boolean(
+                app.hasOverlapped || 
+                app.sessionStartedAt || 
+                (app.doctorJoinedAt && app.patientJoinedAt)
+            );
+
+            if (hasConsultationStarted) {
+                // Once consultation started (via Early Start or Scheduled Start), late cut-off rules do NOT apply.
+                // Re-joins are allowed until Scheduled End Time (slotEndUTC).
+                return now > slotEndUTC;
+            }
 
             if (hasValidPatientWait && !app.doctorJoinedAt) {
                 return now > lateJoinCutoffUTC;
             }
 
-            // Standard no-show (patient failed to show up, or hit-and-run exit <60s): wait until slot officially ends
+            if (!hasValidPatientWait) {
+                // If patient did not have a valid wait and consultation never started, closes at late-join cutoff
+                return now > lateJoinCutoffUTC;
+            }
+
+            // Ongoing/attended consultation: wait until slot officially ends
             return now > slotEndUTC;
         });
 
@@ -291,23 +328,50 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                 lateJoinCutoffUTC = new Date(slotExactUTC.getTime() + graceMins * 60 * 1000);
             }
 
+            const windowStartMs = slotExactUTC.getTime();
+            const windowEndMs = lateJoinCutoffUTC.getTime();
+
             const hasValidPatientWait = (app.patientAttendanceLogs || []).some(log => {
                 if (!log.joinedAt) return false;
                 const joinMs = new Date(log.joinedAt).getTime();
+                
+                // If log ended before or at scheduled start time, ignore completely (Rule 1)
+                if (log.leftAt && new Date(log.leftAt).getTime() <= windowStartMs) {
+                    return false;
+                }
+
+                // If patient joined before scheduled start and left without leftAt recorded,
+                // do NOT assume they stayed into the valid window
+                if (!log.leftAt && joinMs < windowStartMs) {
+                    return false;
+                }
+
+                // If patient joined at or after lateJoinCutoff, no overlap in valid window
+                if (joinMs >= windowEndMs) {
+                    return false;
+                }
+
                 const leaveMs = log.leftAt ? new Date(log.leftAt).getTime() : now.getTime();
-                
-                const windowStartMs = slotExactUTC.getTime();
-                const windowEndMs = lateJoinCutoffUTC.getTime();
-                
                 const overlapStart = Math.max(joinMs, windowStartMs);
                 const overlapEnd = Math.min(leaveMs, windowEndMs);
-                
+
                 if (overlapEnd > overlapStart) {
                     const overlapSeconds = (overlapEnd - overlapStart) / 1000;
-                    if (overlapSeconds >= 60) return true;
+                    return overlapSeconds >= 60;
                 }
                 return false;
             });
+
+            // Clean up any dangling unclosed logs for early joins that were abandoned before start
+            for (const log of app.patientAttendanceLogs || []) {
+                if (!log.leftAt && log.joinedAt) {
+                    const jMs = new Date(log.joinedAt).getTime();
+                    if (jMs < windowStartMs) {
+                        log.leftAt = log.durationSeconds ? new Date(jMs + log.durationSeconds * 1000) : new Date(log.joinedAt);
+                        log.isValidWait = false;
+                    }
+                }
+            }
 
             let has3MinContinuous = false;
             const doctorLogs = app.doctorAttendanceLogs || [];
@@ -338,27 +402,63 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                 if (has3MinContinuous) break;
             }
 
-            // PATIENT REFUND RULE:
-            // If patient met 1-min requirement during valid window, BUT doctor failed to complete 3-min continuous consultation.
-            if (hasValidPatientWait && (!app.doctorJoinedAt || !has3MinContinuous)) {
+            // 1. SUCCESSFUL CONSULTATION:
+            // If doctor and patient met the 3-minute continuous consultation requirement, mark as completed.
+            if (has3MinContinuous) {
+                app.status = 'completed';
+                await app.save();
+                console.log(`[lazyUpdateNoShows] Appointment ${app._id} swept and auto-completed (3-minute continuous consultation met).`);
+
+                try {
+                    const { socketService } = await import('../services/SocketService.js');
+                    if (socketService) {
+                        socketService.emitToRoom(`video_${app._id}`, 'call_ended', {
+                            appointmentId: app._id.toString(),
+                            status: 'completed',
+                            message: 'Consultation completed.'
+                        });
+                        if (app.patientId) {
+                            const pId = app.patientId._id ? app.patientId._id.toString() : app.patientId.toString();
+                            socketService.emitToUser(pId, 'consultation_completed', { appointmentId: app._id.toString(), status: 'completed' });
+                        }
+                        if (app.doctorId) {
+                            const dId = app.doctorId._id ? app.doctorId._id.toString() : app.doctorId.toString();
+                            socketService.emitToUser(dId, 'consultation_completed', { appointmentId: app._id.toString(), status: 'completed' });
+                        }
+                    }
+                } catch (_) {}
+            } else if (hasValidPatientWait && (!app.doctorJoinedAt || !has3MinContinuous)) {
+                // 2. PATIENT REFUND RULE:
+                // If patient met 1-min requirement during valid window, BUT doctor failed to complete 3-min continuous consultation.
                 await this.markDoctorMissed(app);
-            } else if (!hasValidPatientWait) {
-                // EXCLUSION RULE:
-                // If patient was never present for 1-minute block, they DO NOT get a refund.
-                // The fee goes to the doctor (transaction will be handled/allowed to complete or remain).
-                // However, the consultation was not completed properly, so we mark it no-show.
-                // The transaction status might be processed differently, but let's just mark it as no-show.
+            } else {
+                // 3. EXCLUSION RULE:
+                // If patient was never present for 1-minute block in the valid window [Scheduled Start, Late Cut-off]
+                // and consultation never reached 3 minutes continuous, they DO NOT get a refund.
+                // The payment remains with the doctor. Mark as no-show with doctorFault = false.
                 app.status = 'no-show';
                 app.doctorFault = false;
                 await app.save();
-                console.log(`[lazyUpdateNoShows] Patient appointment ${app._id} marked as no-show (patient did not meet 1-minute valid wait).`);
-            } else {
-                // If patient had a valid wait, AND doctor completed 3-mins, but for some reason it's still here
-                // (e.g. they completed it but never clicked end call and the cron swept it up).
-                // We should probably just mark it as completed.
-                app.status = 'completed';
-                await app.save();
-                console.log(`[lazyUpdateNoShows] Appointment ${app._id} swept and auto-completed (both criteria met).`);
+                console.log(`[lazyUpdateNoShows] Patient appointment ${app._id} marked as no-show (patient did not meet 1-minute valid wait during scheduled window).`);
+
+                try {
+                    const { socketService } = await import('../services/SocketService.js');
+                    if (socketService) {
+                        socketService.emitToRoom(`video_${app._id}`, 'call_ended', {
+                            appointmentId: app._id.toString(),
+                            status: 'no-show',
+                            message: 'Consultation closed as no-show.'
+                        });
+                        if (app.patientId) {
+                            const pId = app.patientId._id ? app.patientId._id.toString() : app.patientId.toString();
+                            socketService.emitToUser(pId, 'consultation_completed', { appointmentId: app._id.toString(), status: 'no-show' });
+                        }
+                        if (app.doctorId) {
+                            const dId = app.doctorId._id ? app.doctorId._id.toString() : app.doctorId.toString();
+                            socketService.emitToUser(dId, 'consultation_completed', { appointmentId: app._id.toString(), status: 'no-show' });
+                        }
+                    }
+                } catch (_) {}
             }
         }
     }

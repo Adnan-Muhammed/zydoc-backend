@@ -100,9 +100,9 @@ export class MailService {
             subject: 'New Appointment Booking',
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
-                    <h2 style="color: #1f2937; text-align: center;">New ${visitTypeString} Scheduled</h2>
+                    <h2 style="color: #1f2937; text-align: center;">${visitTypeString} Scheduled</h2>
                     <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">
-                        Hello Dr. ${doctorName}, you have a new ${visitTypeString.toLowerCase()} booking.
+                        Hello Dr. ${doctorName}, you have a ${visitTypeString.toLowerCase()} booking.
                     </p>
                     <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
                         <p style="margin: 5px 0; color: #374151;"><strong>Patient:</strong> ${patientName}</p>
@@ -145,7 +145,7 @@ export class MailService {
                     <h2 style="color: #16a34a; text-align: center;">Refund Request Approved</h2>
                     <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">
                         Hello ${patientName}, your refund request (Ticket #${ticketId}) has been reviewed and approved.
-                    </p>
+                    </p> 
                     <div style="background-color: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #bbf7d0;">
                         <p style="margin: 5px 0; color: #166534; font-size: 18px;"><strong>Amount Credited:</strong> ₹${refundAmount}</p>
                         <p style="margin: 5px 0; color: #374151;"><strong>Method:</strong> Credited to your ZyDoc Wallet</p>

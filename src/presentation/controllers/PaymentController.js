@@ -116,21 +116,26 @@ export const verifyPayment = async (req, res) => {
         recipientId: appointment.doctorId,
         recipientModel: 'Doctor',
         type: 'BOOKING',
-        title: `New ${visitTypeStr} Booked`,
-        message: `A patient has booked a new ${visitTypeStr.toLowerCase()} with you.`,
+        title: `${visitTypeStr} Booked`,
+        message: `A patient has booked a ${visitTypeStr.toLowerCase()} with you.`,
         referenceId: appointment._id
       });
       
       // Fetch the primary admin and create a DB notification for them
       try {
+        const mongoose = (await import('mongoose')).default || await import('mongoose');
+        const Doctor = mongoose.model('Doctor');
+        const doctorProfile = await Doctor.findById(appointment.doctorId);
+        const doctorName = doctorProfile ? `Dr. ${doctorProfile.firstName} ${doctorProfile.lastName || ''}`.trim() : `Doctor`;
+
         const admin = await Admin.findOne();
         if (admin) {
           await createNotificationUseCase.execute({
             recipientId: admin._id,
             recipientModel: 'Admin',
             type: 'BOOKING',
-            title: `New ${visitTypeStr} Booked`,
-            message: `A new ${visitTypeStr.toLowerCase()} has been booked for Doctor ${appointment.doctorId}.`,
+            title: `${visitTypeStr} Booked`,
+            message: `A ${visitTypeStr.toLowerCase()} has been booked for ${doctorName}.`,
             referenceId: appointment._id
           });
         }

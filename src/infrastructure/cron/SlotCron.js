@@ -18,6 +18,9 @@ cron.schedule('* * * * *', async () => {
             // after the lock TTL elapsed.
             await appointmentRepo.expireLockedSlot(appointment._id);
         }
+
+        // Auto-sweep expired online appointments so they never stay orphaned as 'scheduled'
+        await appointmentRepo.lazyUpdateNoShows();
     } catch (error) { 
         console.error("Error in SlotCron:", error);
     }

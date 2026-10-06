@@ -67,6 +67,7 @@ router.patch("/profile/schedule", protect, (req, res) => doctorController.update
 router.post("/profile/certificates", protect, upload.array("certificates", 10), (req, res) => doctorController.uploadCertificates(req, res));
 
 // Doctor Earnings & Payout Bank Details
+router.get("/dashboard-stats", protect, (req, res) => doctorController.getDashboardStats(req, res));
 router.get("/earnings", protect, (req, res) => doctorController.getEarnings(req, res));
 router.patch("/bank-details", protect, (req, res) => doctorController.updateBankDetails(req, res));
 

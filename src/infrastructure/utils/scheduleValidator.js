@@ -4,7 +4,7 @@ export const timeToMins = (timeStr) => {
     if (!timeStr) return 0;
     const [h, m] = timeStr.split(':').map(Number);
     return (h || 0) * 60 + (m || 0);
-};
+}; 
 
 export const isValidGridAlignment = (timeInMins, slotDuration) => {
     return timeInMins % slotDuration === 0;
@@ -37,13 +37,21 @@ export function validateWorkingHours(workingHours, slotDuration = 15) {
         const parseBlock = (b, type) => {
             const startStr = b.start || b.startTime;
             const endStr = b.end || b.endTime;
+            let startMins = timeToMins(startStr);
+            let endMins = timeToMins(endStr);
+
+            // Handle midnight rollover for end time
+            if (endStr === '00:00' && startMins >= 0) {
+                endMins = 1440;
+            }
+
             return {
                 ...b,
                 type,
                 startStr,
                 endStr,
-                startMins: timeToMins(startStr),
-                endMins: timeToMins(endStr),
+                startMins,
+                endMins,
                 slotDuration
             };
         };

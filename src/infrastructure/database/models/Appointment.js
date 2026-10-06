@@ -110,7 +110,7 @@ const appointmentSchema = new mongoose.Schema(
     },
 
     // Tracks whether the doctor's share has been released/transferred
-    payoutStatus: {
+    payoutStatus: { 
       type: String,
       enum: ["PENDING", "RELEASED", "HELD"],
       // PENDING  = payment collected, not yet released to doctor

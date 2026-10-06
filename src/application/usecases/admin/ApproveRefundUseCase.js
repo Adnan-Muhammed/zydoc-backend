@@ -80,7 +80,7 @@ export class ApproveRefundUseCase {
       try {
         await this.createNotificationUseCase.execute({
           recipientId: patientUserId,
-          recipientModel: "User",
+          recipientModel: "User", 
           type: "REFUND_APPROVED",
           title: "Refund Approved & Credited to Wallet",
           message: `Your offline consultation refund request (Ticket #${ticketIdStr.slice(

@@ -8,10 +8,13 @@
 //   async updateProfile(req, res) {
 //     try {
 //       const userId = req.user?.id;
+import mongoose from "mongoose";
 import { validateWorkingHours } from "../../infrastructure/utils/scheduleValidator.js";
 import { deduceSystemOfMedicine, normalizeSystemOfMedicine } from "../../infrastructure/utils/systemOfMedicineHelper.js";
 import Appointment from "../../infrastructure/database/models/Appointment.js";
 import SharedUser from "../../infrastructure/database/models/SharedUser.js";
+import Doctor from "../../infrastructure/database/models/DoctorProfile.js";
+import { MongoReviewRepository } from "../../modules/reviews-ratings/repositories/MongoReviewRepository.js";
 
 export class DoctorController {
     constructor(updateDoctorProfileUseCase, jwtService, patchDoctorProfileUseCase, uploadDoctorDocuments, getDoctorProfile, updateFcmToken, getDoctorEarningsUseCase, updateBankDetailsUseCase) {
@@ -351,6 +354,131 @@ export class DoctorController {
             return res.status(400).json({
                 success: false,
                 message: error.message || "Failed to update bank details"
+            });
+        }
+    }
+
+    async getDashboardStats(req, res) {
+        try {
+            const userId = req.user?.id || req.user?._id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
+
+            const sharedUser = await SharedUser.findById(userId);
+            if (!sharedUser || !sharedUser.profileId) {
+                return res.status(404).json({ success: false, message: "Doctor profile not found" });
+            }
+
+            const doctorProfileId = sharedUser.profileId;
+            const doctorProfile = await Doctor.findById(doctorProfileId);
+
+            // 1. Total Distinct Patients
+            const uniquePatientIds = await Appointment.distinct("patientId", {
+                doctorId: doctorProfileId,
+                patientId: { $ne: null }
+            });
+            const totalPatients = uniquePatientIds.length;
+
+            // 2. Appointment Aggregations & Status Breakdown
+            const appointmentStatusAgg = await Appointment.aggregate([
+                { $match: { doctorId: new mongoose.Types.ObjectId(doctorProfileId) } },
+                { $group: { _id: "$status", count: { $sum: 1 } } }
+            ]);
+
+            let totalAppointments = 0;
+            let completedAppointments = 0;
+            let upcomingAppointments = 0;
+            let cancelledAppointments = 0;
+
+            appointmentStatusAgg.forEach(item => {
+                if (item._id !== 'locked' && item._id !== 'expired') {
+                    totalAppointments += item.count;
+                }
+                if (item._id === 'completed') {
+                    completedAppointments += item.count;
+                } else if (['scheduled', 'in_progress', 'patient joined', 'time reached'].includes(item._id)) {
+                    upcomingAppointments += item.count;
+                } else if (['cancelled', 'cancelled_by_doctor', 'cancelled_by_admin', 'doctor_missed', 'refunded'].includes(item._id)) {
+                    cancelledAppointments += item.count;
+                }
+            });
+
+            // 3. Total Earnings (Settled, Pending, Total)
+            let earningsSummary = {
+                pendingEarnings: 0,
+                settledEarnings: 0,
+                totalEarnings: 0,
+                pendingCount: 0,
+                settledCount: 0
+            };
+            if (this.getDoctorEarningsUseCase) {
+                try {
+                    const earningsData = await this.getDoctorEarningsUseCase.execute(userId);
+                    if (earningsData?.summary) {
+                        earningsSummary = earningsData.summary;
+                    }
+                } catch (e) {
+                    console.warn("[DoctorController.getDashboardStats] Earnings calculation warning:", e.message);
+                }
+            }
+
+            // 4. Rating & Reviews Breakdown
+            const reviewRepo = new MongoReviewRepository();
+            let averageRating = doctorProfile?.rating || 0;
+            let totalReviews = doctorProfile?.reviewCount || 0;
+            let starCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+            let breakdownPercentages = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+
+            try {
+                const ratingData = await reviewRepo.getDoctorRatingBreakdown(doctorProfileId);
+                if (ratingData) {
+                    averageRating = ratingData.averageRating || 0;
+                    totalReviews = ratingData.totalReviews || 0;
+                    starCounts = ratingData.starCounts || starCounts;
+                    breakdownPercentages = ratingData.breakdownPercentages || breakdownPercentages;
+                }
+            } catch (e) {
+                console.warn("[DoctorController.getDashboardStats] Review aggregation warning:", e.message);
+            }
+
+            const positiveReviewsCount = (starCounts[4] || 0) + (starCounts[5] || 0);
+            const satisfactionRate = totalReviews > 0 ? Math.round((positiveReviewsCount / totalReviews) * 100) : (totalAppointments > 0 ? 100 : 0);
+            const qualityScore = averageRating > 0 ? Math.round((averageRating / 5) * 100) : (totalAppointments > 0 ? 100 : 0);
+
+            // 5. Consultation Settings & Availability
+            const onlineSettings = doctorProfile?.consultationSettings?.online || { enabled: true, fee: 0 };
+            const offlineSettings = doctorProfile?.consultationSettings?.offline || { enabled: false, fee: 0, clinicName: '', clinicAddress: '' };
+
+            return res.status(200).json({
+                success: true,
+                stats: {
+                    totalPatients,
+                    totalAppointments,
+                    completedAppointments,
+                    upcomingAppointments,
+                    cancelledAppointments,
+                    totalEarnings: earningsSummary.totalEarnings || 0,
+                    settledEarnings: earningsSummary.settledEarnings || 0,
+                    pendingEarnings: earningsSummary.pendingEarnings || 0,
+                    rating: averageRating,
+                    totalReviews,
+                    starCounts,
+                    breakdownPercentages,
+                    satisfactionRate,
+                    qualityScore,
+                    consultationSettings: {
+                        online: onlineSettings,
+                        offline: offlineSettings
+                    }
+                }
+            });
+        } catch (error) {
+            console.error("[DoctorController.getDashboardStats] Error:", error);
+            return res.status(500).json({
+                success: false,
+                message: "Failed to retrieve doctor dashboard stats",
+                error: error.message
             });
         }
     }

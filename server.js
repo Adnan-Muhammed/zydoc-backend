@@ -4,7 +4,7 @@ import express from "express";
 // import dotenv from 'dotenv';
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import morgan from "morgan";
+import morgan from "morgan"; 
 import helmet from "helmet";
 import http from "http";
 import { socketService } from "./src/infrastructure/services/SocketService.js";

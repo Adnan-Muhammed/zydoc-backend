@@ -158,7 +158,7 @@ export class CancelAppointmentUseCase {
             appointment.appointmentDate
           ).toDateString()} at ${appointment.appointmentTime} has been cancelled. A 100% refund of ₹${refundAmount} has been credited to your wallet.`,
           referenceId: appointment._id,
-        });
+        }); 
 
         // Doctor notification
         await this.createNotificationUseCase.execute({

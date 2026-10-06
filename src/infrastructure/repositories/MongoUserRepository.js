@@ -1489,7 +1489,7 @@ export class MongoUserRepository extends UserRepository {
               message: `Your appointment with Dr. ${doctorProfile.firstName} ${doctorProfile.lastName} on ${dateStr} at ${app.appointmentTime} has been cancelled due to doctor account suspension. A full refund of ₹${refundAmount} has been credited to your wallet.`,
               referenceId: app._id,
             });
-          }
+          } 
         } catch (notifErr) {
           console.error(`[suspendDoctor] Notification failed for patient ${app.patientId}:`, notifErr.message);
         }

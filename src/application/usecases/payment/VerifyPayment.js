@@ -87,7 +87,7 @@ export class VerifyPayment {
         const error = new Error('Wallet debit failed during split payment. Online portion has been refunded.');
         error.code = 'WALLET_DEBIT_FAILED';
         throw error;
-      }
+      } 
     }
     // ───────────────────────────────────────────────────────────────────────────
 

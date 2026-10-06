@@ -21,7 +21,7 @@ class SocketService {
 
     this.io.on("connection", (socket) => {
       // console.log(`[SocketService] New client connected: ${socket.id}`);
-// console log commented 
+      // console log commented 
       // Expect the client to emit a "register" event with their userId and role
       socket.on("register", (data) => {
         const { userId, role } = data;
@@ -31,14 +31,14 @@ class SocketService {
             this.users.set(userStr, new Set());
           }
           this.users.get(userStr).add(socket.id);
-          
-        //  console.log(`[SocketService] User registered: ${userId} (${role}) with socket: ${socket.id}`);
-// console log commented 
+
+          //  console.log(`[SocketService] User registered: ${userId} (${role}) with socket: ${socket.id}`);
+          // console log commented 
           // If the user is an admin, they can join an "admin" room
           if (role === "admin") {
             socket.join("admin_room");
-           // console.log(`[SocketService] Admin joined admin_room: ${userId}`);
-          // console log commented 
+            // console.log(`[SocketService] Admin joined admin_room: ${userId}`);
+            // console log commented 
           }
         }
       });
@@ -56,7 +56,7 @@ class SocketService {
             if (sockets.size === 0) {
               this.users.delete(userId);
               // console.log(`[SocketService] User removed from active connections: ${userId}`);
-            // console log commented 
+              // console log commented 
             }
             break;
           }
@@ -67,7 +67,7 @@ class SocketService {
     });
 
     // console.log("[SocketService] Socket.io initialized successfully.");
-  // console log commented 
+    // console log commented 
   }
 
   async emitNewBookingNotification(doctorId, bookingDetails) {
@@ -114,7 +114,7 @@ class SocketService {
       console.error("[SocketService] Socket.io is not initialized!");
       return;
     }
-    
+
     // Convert userId to string to ensure it matches the map key
     const sockets = this.users.get(userId.toString());
     if (sockets && sockets.size > 0) {
@@ -122,7 +122,7 @@ class SocketService {
         this.io.to(socketId).emit(event, payload);
       }
       //console.log(`[SocketService] Emitted ${event} to User ${userId} on ${sockets.size} active tab(s)`);
-    // console log commented
+      // console log commented
     } else {
       // console.log(`[SocketService] User ${userId} is not online. Event ${event} skipped.`);
       // console log commented
@@ -136,7 +136,7 @@ class SocketService {
     }
     this.io.to(room).emit(event, payload);
     // console.log(`[SocketService] Emitted ${event} to Room ${room}`);
-  // console log commented
+    // console log commented
   }
 
   isUserOnline(userId) {

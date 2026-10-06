@@ -49,7 +49,7 @@ export class GoogleLoginUser {
       }
       if (user.isDeleted) {
         throw new Error('Your account has been deactivated');
-      }
+      } 
       
       if (!user.isVerified) {
         // The user started an email signup but abandoned the OTP.

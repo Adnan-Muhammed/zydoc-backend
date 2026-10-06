@@ -1,5 +1,5 @@
 export class GetDoctorEarnings {
-  constructor(transactionRepository) {
+  constructor(transactionRepository) { 
     this.transactionRepository = transactionRepository;
   }
 

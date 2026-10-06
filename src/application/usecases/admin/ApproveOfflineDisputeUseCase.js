@@ -65,7 +65,7 @@ export class ApproveOfflineDisputeUseCase {
         // Patient notification
         await this.createNotificationUseCase.execute({
           recipientId: appointment.patientId,
-          recipientModel: 'User',
+          recipientModel: 'User', 
           type: 'REFUND_APPROVED',
           title: 'Dispute Approved & Refunded to Wallet',
           message: `Your dispute for appointment on ${new Date(

@@ -109,7 +109,7 @@ export class JoinRoomUseCase {
             return; // Block join
           }
 
-          if (['completed', 'no-show', 'cancelled', 'cancelled_by_doctor', 'disputed', 'refunded'].includes(appointment.status)) {
+          if (['completed', 'no-show', 'cancelled', 'cancelled_by_doctor', 'doctor_missed', 'disputed', 'refunded'].includes(appointment.status)) {
             // Emit error directly to the socket trying to join
             if (this.signalingGateway.socket?.id) {
               this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", { message: "This consultation has already ended." });
@@ -175,27 +175,36 @@ export class JoinRoomUseCase {
             }
 
             // Determine proportional late entry cutoff time
+            const slotDurationMins = (appointment.scheduledStartAt && appointment.scheduledEndAt)
+              ? Math.round((new Date(appointment.scheduledEndAt) - new Date(appointment.scheduledStartAt)) / 60000)
+              : (Number(appointment.doctorId?.slotDuration) || 15);
+
             let lateJoinCutoffMs;
             let cutoffMinsForMessage = 5;
             if (appointment.lateJoinCutoffAt) {
                 lateJoinCutoffMs = appointment.lateJoinCutoffAt.getTime();
                 cutoffMinsForMessage = Math.max(1, Math.round((lateJoinCutoffMs - scheduledStartMs) / 60000));
             } else {
-                const slotDurationMins = (appointment.scheduledStartAt && appointment.scheduledEndAt)
-                  ? Math.round((new Date(appointment.scheduledEndAt) - new Date(appointment.scheduledStartAt)) / 60000)
-                  : 15;
                 cutoffMinsForMessage = getLateJoinGraceMinutes(slotDurationMins);
                 lateJoinCutoffMs = scheduledStartMs + cutoffMinsForMessage * 60000;
             }
 
-            // ── Patient Join & Re-join Eligibility (Rule 4) ────────────────────
-            // Case A: Active consultation re-join (doctor and patient already connected before)
-            if (appointment.hasOverlapped && appointment.status !== 'completed') {
-              const baseEndMs = appointment.scheduledEndAt
-                ? new Date(appointment.scheduledEndAt).getTime()
-                : (scheduledStartMs + 15 * 60000);
-              
-              if (currentMs > baseEndMs) {
+            // ── Consultation Re-join vs First-Join Cut-Off Rules (Rule 9) ───────
+            const hasConsultationStarted = Boolean(
+              appointment.hasOverlapped ||
+              appointment.sessionStartedAt ||
+              (appointment.doctorJoinedAt && appointment.patientJoinedAt)
+            );
+
+            const baseEndMs = appointment.scheduledEndAt
+              ? new Date(appointment.scheduledEndAt).getTime()
+              : (scheduledStartMs + slotDurationMins * 60000);
+
+            if (hasConsultationStarted) {
+              // Once doctor & patient have connected and started the consultation (via Early Start or Scheduled Start),
+              // late join cut-off rules no longer apply.
+              // Both retain the full right to re-join at any time prior to the Scheduled End Time.
+              if (currentMs >= baseEndMs) {
                 const errMsg = {
                   message: "The scheduled slot time for this consultation has ended. Re-joining is no longer possible."
                 };
@@ -204,12 +213,12 @@ export class JoinRoomUseCase {
                 return;
               }
             } else if (normalizedRole === 'patient') {
-              // Case B: Initial waiting phase (doctor and patient have not yet met)
+              // Initial waiting phase (consultation has NEVER started):
               // Strict cut-off: access is blocked past lateJoinCutoffAt
               if (currentMs >= lateJoinCutoffMs) {
                 const errMsg = {
                   message: hasJoinedBefore
-                    ? `The consultation window has closed (late-join cutoff: ${cutoffMinsForMessage} min after scheduled start). Re-joining is no longer possible.`
+                    ? `The consultation window has closed (late-join cutoff: ${cutoffMinsForMessage} min after scheduled start). Joining is no longer possible.`
                     : `The late entry grace period (${cutoffMinsForMessage} mins) has expired for this consultation.`
                 };
                 if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
