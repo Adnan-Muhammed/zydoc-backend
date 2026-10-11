@@ -69,16 +69,17 @@ export class SignupUser {
 
         const newSignupToken = this.authService.generateSignupToken(savedUser.id || savedUser._id);
 
-        // 4. SEND THE EMAIL
-        try {
-                        // await this.mailService.sendOtpEmail(email, code);
-
-            // PURPOSE: Sends OTP for sign-up verification
-            // TODO: Uncomment the line below to enable actual email sending in production
-            // await this.mailService.sendOtpEmail(email, code);
-            console.log("TEST_LOG [Sends OTP for sign-up verification]:", { email, code });
-        } catch (error) {
-            console.error("Email delivery failed:", error);
+        // 4. SEND THE EMAIL (Centralized via emailService; gated by EMAIL_FEATURES.SIGNUP_OTP)
+        if (this.mailService && (typeof this.mailService.sendSignupOtpEmail === 'function' || typeof this.mailService.sendOtpEmail === 'function')) {
+            try {
+                if (typeof this.mailService.sendSignupOtpEmail === 'function') {
+                    await this.mailService.sendSignupOtpEmail({ email, otp: code });
+                } else {
+                    await this.mailService.sendOtpEmail(email, code, 'SIGNUP_OTP');
+                }
+            } catch (error) {
+                console.error("[SignupUser] Email delivery failed:", error?.message || error);
+            }
         }
         
         return { 

@@ -111,9 +111,18 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     }
 
     async unlockSlot(payload, userId) {
-        // Patient-initiated explicit unlock: safe to hard-delete because the
-        // patient is abandoning the slot before any payment attempt.
-        let query = { lockedBy: userId, status: 'locked' };
+        // Finding F-03: Patient-initiated explicit unlock is safe to hard-delete
+        // ONLY when the slot has not been associated with an active Razorpay order
+        // and no payment has been captured/completed.
+        // Never delete an appointment that must be preserved for payment verification
+        // or one associated with an active or successfully captured payment.
+        let query = {
+            lockedBy: userId,
+            status: 'locked',
+            paymentStatus: { $ne: 'paid' },
+            paymentId: { $in: [null, undefined, ''] },
+            razorpayOrderId: { $in: [null, undefined, ''] },
+        };
 
         if (typeof payload === 'string' || payload instanceof mongoose.Types.ObjectId) {
             query._id = payload;

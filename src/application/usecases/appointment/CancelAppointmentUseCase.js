@@ -1,5 +1,6 @@
 import Appointment from '../../../infrastructure/database/models/Appointment.js';
 import Transaction from '../../../infrastructure/database/models/Transaction.js';
+import WalletTransaction from '../../../infrastructure/database/models/WalletTransaction.js';
 import { getSlotExactUTC } from '../../../infrastructure/utils/timeUtils.js';
 
 export class CancelAppointmentUseCase {
@@ -11,19 +12,10 @@ export class CancelAppointmentUseCase {
   async execute({ appointmentId, patientId, doctorId, userRole, reason }) {
     if (!appointmentId) throw new Error('appointmentId is required');
 
-    const appointment = await Appointment.findById(appointmentId);
+    let appointment = await Appointment.findById(appointmentId);
     if (!appointment) {
       const err = new Error('Appointment not found');
       err.statusCode = 404;
-      throw err;
-    }
-
-    // Only scheduled appointments can be cancelled
-    if (appointment.status !== 'scheduled') {
-      const err = new Error(
-        `Cannot cancel appointment with status '${appointment.status}'. Only 'scheduled' appointments can be cancelled.`
-      );
-      err.statusCode = 400;
       throw err;
     }
 
@@ -37,6 +29,14 @@ export class CancelAppointmentUseCase {
       if (!isDoctorOwner) {
         const err = new Error('You are not authorized to cancel this manual appointment.');
         err.statusCode = 403;
+        throw err;
+      }
+
+      if (appointment.status !== 'scheduled') {
+        const err = new Error(
+          `Cannot cancel appointment with status '${appointment.status}'. Only 'scheduled' appointments can be cancelled.`
+        );
+        err.statusCode = 400;
         throw err;
       }
 
@@ -80,6 +80,23 @@ export class CancelAppointmentUseCase {
       throw err;
     }
 
+    // Ineligible status checks (or already cancelled)
+    if (appointment.status === 'cancelled' && appointment.paymentStatus === 'refunded') {
+      const err = new Error(
+        `Cannot cancel appointment with status '${appointment.status}'. Only 'scheduled' appointments can be cancelled.`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (appointment.status !== 'scheduled' && appointment.status !== 'refund_pending') {
+      const err = new Error(
+        `Cannot cancel appointment with status '${appointment.status}'. Only 'scheduled' appointments can be cancelled.`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
     // Calculate appointment scheduled start time
     const dateStr = appointment.appointmentDate
       ? new Date(appointment.appointmentDate).toISOString().split('T')[0]
@@ -93,7 +110,8 @@ export class CancelAppointmentUseCase {
     const diffHours = diffMs / (1000 * 60 * 60);
 
     // Strict 24-Hour Rule: current time must be strictly greater than 24 hours before scheduledStartAt
-    if (diffHours <= 24) {
+    // (Only evaluated for initial scheduled state; refund_pending is an in-flight recovery initiated within window)
+    if (appointment.status === 'scheduled' && diffHours <= 24) {
       const err = new Error(
         'Appointments can only be cancelled strictly more than 24 hours prior to the scheduled time.'
       );
@@ -104,27 +122,124 @@ export class CancelAppointmentUseCase {
 
     const refundAmount = Number(appointment.feeBreakdown?.totalFee || appointment.fee || 0);
 
-    // 1. Credit full refund to patient's wallet
-    let walletResult = null;
-    if (refundAmount > 0 && this.creditWalletUseCase) {
-      walletResult = await this.creditWalletUseCase.execute({
-        patientId: appointment.patientId,
-        amount: refundAmount,
-        source: 'PATIENT_CANCELLATION',
-        description: `Refund for appointment cancellation (>24h notice) on ${new Date(
-          appointment.appointmentDate
-        ).toDateString()} at ${appointment.appointmentTime}`,
-        appointmentId: appointment._id,
-      });
+    // ── Phase 1: Atomic Concurrency Claim ──────────────────────────────────────
+    let claimedAppointment = null;
+
+    if (appointment.status === 'scheduled') {
+      claimedAppointment = await Appointment.findOneAndUpdate(
+        {
+          _id: appointment._id,
+          patientId: appointment.patientId,
+          status: 'scheduled',
+        },
+        {
+          $set: {
+            status: 'refund_pending',
+            refundClaimedAt: new Date(),
+            cancellationReason: reason || 'Cancelled by patient (>24h before appointment)',
+            cancelledAt: new Date(),
+          },
+        },
+        { returnDocument: 'after' }
+      );
+    } else if (appointment.status === 'refund_pending') {
+      // In recovery mode for an interrupted refund: atomically claim recovery lease
+      const leaseThreshold = new Date(Date.now() - 5000); // 5-second lease
+      claimedAppointment = await Appointment.findOneAndUpdate(
+        {
+          _id: appointment._id,
+          patientId: appointment.patientId,
+          status: 'refund_pending',
+          $or: [
+            { refundClaimedAt: { $exists: false } },
+            { refundClaimedAt: null },
+            { refundClaimedAt: { $lt: leaseThreshold } },
+          ],
+        },
+        {
+          $set: {
+            refundClaimedAt: new Date(),
+          },
+        },
+        { returnDocument: 'after' }
+      );
     }
 
-    // 2. Update appointment record
+    if (!claimedAppointment) {
+      // Another concurrent request holds the active claim or already finalized it.
+      // Poll briefly to await finalization.
+      let refreshed = await Appointment.findById(appointmentId);
+      let waitAttempts = 0;
+      while (refreshed?.status === 'refund_pending' && waitAttempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        refreshed = await Appointment.findById(appointmentId);
+        waitAttempts++;
+      }
+
+      if (refreshed?.status === 'cancelled') {
+        return {
+          success: true,
+          message: `Appointment cancelled successfully. ₹${refreshed.refundAmount || refundAmount} refunded to your wallet.`,
+          appointment: refreshed,
+        };
+      }
+
+      const err = new Error(
+        refreshed?.status === 'refund_pending'
+          ? 'Cancellation and refund is already in progress for this appointment.'
+          : `Cannot cancel appointment with status '${refreshed?.status}'. Only 'scheduled' appointments can be cancelled.`
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    appointment = claimedAppointment;
+
+    // ── Phase 2: Idempotent Wallet Refund Processing ──────────────────────────
+    let walletResult = null;
+    let existingTx = null;
+
+    if (refundAmount > 0) {
+      // Check if wallet was already credited (e.g. during a prior interrupted attempt)
+      try {
+        existingTx = await WalletTransaction.findOne({
+          appointmentId: appointment._id,
+          source: 'PATIENT_CANCELLATION',
+          type: 'CREDIT',
+        });
+      } catch (txFindErr) {
+        console.error('[CancelAppointmentUseCase] Error checking existing refund tx:', txFindErr);
+      }
+
+      if (existingTx) {
+        // Idempotent hit: wallet was already credited in prior execution
+        walletResult = {
+          transaction: existingTx,
+        };
+      } else if (this.creditWalletUseCase) {
+        // Execute wallet credit. If this throws, appointment remains in 'refund_pending'
+        // allowing retry without losing the refund state or prematurely cancelling without payout.
+        walletResult = await this.creditWalletUseCase.execute({
+          patientId: appointment.patientId,
+          amount: refundAmount,
+          source: 'PATIENT_CANCELLATION',
+          description: `Refund for appointment cancellation (>24h notice) on ${new Date(
+            appointment.appointmentDate
+          ).toDateString()} at ${appointment.appointmentTime}`,
+          appointmentId: appointment._id,
+        });
+      }
+    }
+
+    // ── Phase 3: Finalize Appointment State ───────────────────────────────────
     appointment.status = 'cancelled';
     appointment.paymentStatus = 'refunded';
-    appointment.cancellationReason = reason || 'Cancelled by patient (>24h before appointment)';
-    appointment.cancelledAt = new Date();
     appointment.refundedAt = new Date();
     appointment.refundAmount = refundAmount;
+    appointment.refundId =
+      existingTx?._id?.toString() ||
+      walletResult?.transaction?._id?.toString() ||
+      `WALLET_REFUND_${appointment._id}`;
 
     // Prune dead operational state
     appointment.lockedBy = undefined;
@@ -135,7 +250,7 @@ export class CancelAppointmentUseCase {
 
     await appointment.save();
 
-    // 3. Cancel doctor's platform transaction payout
+    // ── Phase 4: Secondary Side Effects (Doctor Transaction & Notifications) ─
     try {
       await Transaction.findOneAndUpdate(
         { appointmentId: appointment._id },
@@ -145,7 +260,6 @@ export class CancelAppointmentUseCase {
       console.error(`[CancelAppointmentUseCase] Error updating transaction for ${appointment._id}:`, txErr);
     }
 
-    // 4. Trigger notifications
     if (this.createNotificationUseCase && typeof this.createNotificationUseCase.execute === 'function') {
       try {
         // Patient notification
@@ -158,7 +272,7 @@ export class CancelAppointmentUseCase {
             appointment.appointmentDate
           ).toDateString()} at ${appointment.appointmentTime} has been cancelled. A 100% refund of ₹${refundAmount} has been credited to your wallet.`,
           referenceId: appointment._id,
-        }); 
+        });
 
         // Doctor notification
         await this.createNotificationUseCase.execute({

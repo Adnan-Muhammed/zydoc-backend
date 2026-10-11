@@ -27,9 +27,20 @@ export class EndRoomUseCase {
     }
 
     // 2. Doctor-Only Conclusion Guard (Rule 8.2)
-    // Only the doctor or system hard-stop can conclude the consultation.
-    if (!isSystemForce && normalizedRole !== 'doctor') {
-      throw new Error("Only the doctor is permitted to conclude the consultation.");
+    // Only the assigned doctor or system hard-stop can conclude the consultation.
+    if (!isSystemForce) {
+      if (normalizedRole !== 'doctor') {
+        throw new Error("Only the doctor is permitted to conclude the consultation.");
+      }
+      const SharedUser = (await import('../../../infrastructure/database/models/SharedUser.js')).default;
+      const sharedUser = await SharedUser.findById(userId).select('profileId');
+      const doctorProfileId = sharedUser?.profileId;
+      const isAuthorizedDoctor =
+        (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+        ((appointment.doctorId?._id || appointment.doctorId)?.toString() === userId?.toString());
+      if (!isAuthorizedDoctor) {
+        throw new Error("Only the assigned doctor is permitted to conclude this consultation.");
+      }
     }
 
     const now = new Date();

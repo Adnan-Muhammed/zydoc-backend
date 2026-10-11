@@ -13,9 +13,14 @@ export class DoctorPatientsController {
    */
   async getMyPatients(req, res) {
     try {
-      const userId = req.user?.id || req.user?._id;
+      const user = req.user;
+      const userId = user?.id || user?._id;
       if (!userId) {
         return res.status(401).json({ success: false, message: "Unauthorized. User ID missing." });
+      }
+
+      if (!user.role || (user.role !== 'doctor' && user.role !== 'admin')) {
+        return res.status(403).json({ success: false, message: "Access denied. Doctor privileges required." });
       }
 
       const doctorSharedUser = await SharedUser.findById(userId);
@@ -155,9 +160,14 @@ export class DoctorPatientsController {
         return res.status(400).json({ success: false, message: "A valid Patient ID is required." });
       }
 
-      const userId = req.user?.id || req.user?._id;
+      const user = req.user;
+      const userId = user?.id || user?._id;
       if (!userId) {
         return res.status(401).json({ success: false, message: "Unauthorized. User ID missing." });
+      }
+
+      if (!user.role || (user.role !== 'doctor' && user.role !== 'admin')) {
+        return res.status(403).json({ success: false, message: "Access denied. Doctor privileges required." });
       }
 
       const doctorSharedUser = await SharedUser.findById(userId);
@@ -166,11 +176,49 @@ export class DoctorPatientsController {
       }
       const doctorProfileId = doctorSharedUser.profileId;
 
-      // 1. Retrieve Patient Demographics Overview
-      const patientSharedUser = await SharedUser.findById(patientId).populate("profileId");
+      // 1. Locate Patient
+      let patientSharedUser = await SharedUser.findById(patientId).populate("profileId");
+      if (!patientSharedUser) {
+        patientSharedUser = await SharedUser.findOne({ profileId: patientId }).populate("profileId");
+      }
       if (!patientSharedUser) {
         return res.status(404).json({ success: false, message: "Patient not found." });
       }
+
+      // 2. Strict Relationship Authorization Check BEFORE exposing sensitive clinical/demographic data
+      const doctorIds = [doctorProfileId];
+      if (doctorSharedUser._id && doctorSharedUser._id.toString() !== doctorProfileId.toString()) {
+        doctorIds.push(doctorSharedUser._id);
+      }
+
+      const targetPatientIds = [patientSharedUser._id];
+      if (patientSharedUser.profileId?._id) {
+        targetPatientIds.push(patientSharedUser.profileId._id);
+      } else if (patientSharedUser.profileId) {
+        targetPatientIds.push(patientSharedUser.profileId);
+      }
+
+      // Query appointments with a qualifying clinical booking status (exclude unbooked/transient lock/expired slots)
+      const appointments = await Appointment.find({
+        doctorId: { $in: doctorIds },
+        patientId: { $in: targetPatientIds },
+        status: { $nin: ["available", "locked", "expired"] },
+      })
+        .sort({ appointmentDate: -1, createdAt: -1 })
+        .select(
+          "appointmentDate appointmentTime consultationType status fee feeBreakdown clinicalNotes prescriptions consultationFiles sessionStartedAt sessionEndedAt cancellationReason createdAt"
+        )
+        .lean();
+
+      // Authorization guard: doctor must have at least one qualifying appointment with this patient
+      if (user.role === 'doctor' && appointments.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You do not have an active or past clinical relationship with this patient.",
+        });
+      }
+
+      // 3. Assemble Patient Demographics Overview (only for authorized requests)
       const profile = patientSharedUser.profileId || {};
       const patientData = {
         id: patientSharedUser._id,
@@ -187,17 +235,6 @@ export class DoctorPatientsController {
         currentMedications: Array.isArray(profile.medicalHistory?.currentMedications) ? profile.medicalHistory.currentMedications : [],
         emergencyContact: profile.emergencyContact || null,
       };
-
-      // 2. Strict Privacy-Filtered Consultations Query
-      const appointments = await Appointment.find({
-        doctorId: doctorProfileId,
-        patientId: new mongoose.Types.ObjectId(patientId),
-      })
-        .sort({ appointmentDate: -1, createdAt: -1 })
-        .select(
-          "appointmentDate appointmentTime consultationType status fee feeBreakdown clinicalNotes prescriptions consultationFiles sessionStartedAt sessionEndedAt cancellationReason createdAt"
-        )
-        .lean();
 
       return res.status(200).json({
         success: true,

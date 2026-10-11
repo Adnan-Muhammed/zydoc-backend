@@ -1,4 +1,5 @@
 import { Server } from "socket.io";
+import jwt from "jsonwebtoken";
 import { registerWebRTCRoutes } from "../../modules/video-call/routes/socketRoutes.js";
 
 class SocketService {
@@ -19,55 +20,80 @@ class SocketService {
       pingInterval: 10000,  // Ping the client every 10 seconds
     });
 
-    this.io.on("connection", (socket) => {
-      // console.log(`[SocketService] New client connected: ${socket.id}`);
-      // console log commented 
-      // Expect the client to emit a "register" event with their userId and role
-      socket.on("register", (data) => {
-        const { userId, role } = data;
-        if (userId) {
-          const userStr = userId.toString();
-          if (!this.users.has(userStr)) {
-            this.users.set(userStr, new Set());
-          }
-          this.users.get(userStr).add(socket.id);
+    // 🔒 Enforce JWT Handshake Authentication
+    this.io.use((socket, next) => this.authenticateSocket(socket, next));
 
-          //  console.log(`[SocketService] User registered: ${userId} (${role}) with socket: ${socket.id}`);
-          // console log commented 
-          // If the user is an admin, they can join an "admin" room
-          if (role === "admin") {
-            socket.join("admin_room");
-            // console.log(`[SocketService] Admin joined admin_room: ${userId}`);
-            // console log commented 
-          }
-        }
-      });
+    this.io.on("connection", (socket) => this.handleConnection(socket));
+  }
 
-      // WebRTC Signaling Events
-      registerWebRTCRoutes(socket, this.io);
+  authenticateSocket(socket, next) {
+    try {
+      let token = socket.handshake.auth?.token;
+      if (!token && socket.handshake.headers?.authorization?.startsWith("Bearer ")) {
+        token = socket.handshake.headers.authorization.split(" ")[1];
+      }
+      if (!token && socket.handshake.headers?.cookie) {
+        const match = socket.handshake.headers.cookie.match(/(?:^|;\s*)accessToken=([^;]+)/);
+        if (match) token = decodeURIComponent(match[1]);
+      }
 
-      socket.on("disconnect", () => {
-        // console.log(`[SocketService] Client disconnected: ${socket.id}`);
-        // console log commented 
-        // Remove the disconnected socket from our users map
-        for (const [userId, sockets] of this.users.entries()) {
-          if (sockets.has(socket.id)) {
-            sockets.delete(socket.id);
-            if (sockets.size === 0) {
-              this.users.delete(userId);
-              // console.log(`[SocketService] User removed from active connections: ${userId}`);
-              // console log commented 
-            }
-            break;
-          }
-        }
+      if (!token || token === "null" || token === "undefined") {
+        return next(new Error("Unauthorized: No token provided in socket handshake"));
+      }
 
-        // WebRTC disconnect is handled by the video-call module
-      });
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || "access_secret");
+      socket.user = decoded;
+      socket.userId = (decoded.id || decoded._id)?.toString();
+      socket.userRole = decoded.role ? decoded.role.toLowerCase() : null;
+
+      if (!socket.userId) {
+        return next(new Error("Unauthorized: Invalid user payload in token"));
+      }
+
+      next();
+    } catch (err) {
+      return next(new Error(`Unauthorized: ${err.message}`));
+    }
+  }
+
+  handleConnection(socket) {
+    // Automatically register the verified user and join their private user room
+    if (socket.userId) {
+      const userStr = socket.userId;
+      if (!this.users.has(userStr)) {
+        this.users.set(userStr, new Set());
+      }
+      this.users.get(userStr).add(socket.id);
+      socket.join(userStr);
+
+      // Join admin_room strictly if verified JWT role is admin
+      if (socket.userRole === "admin") {
+        socket.join("admin_room");
+      }
+    }
+
+    // Backward compatibility: ignore client role to prevent privilege escalation
+    socket.on("register", (data) => {
+      // Safe no-op: verified identity from JWT is already registered
     });
 
-    // console.log("[SocketService] Socket.io initialized successfully.");
-    // console log commented 
+    // WebRTC Signaling Events
+    if (this.io) {
+      registerWebRTCRoutes(socket, this.io);
+    }
+
+    // WebRTC disconnect is handled by the video-call module
+    socket.on("disconnect", () => {
+      for (const [userId, sockets] of this.users.entries()) {
+        if (sockets.has(socket.id)) {
+          sockets.delete(socket.id);
+          if (sockets.size === 0) {
+            this.users.delete(userId);
+          }
+          break;
+        }
+      }
+    });
   }
 
   async emitNewBookingNotification(doctorId, bookingDetails) {
@@ -146,5 +172,5 @@ class SocketService {
   }
 }
 
-// Export a singleton instance
+export { SocketService };
 export const socketService = new SocketService();

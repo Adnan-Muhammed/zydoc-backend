@@ -85,4 +85,17 @@ walletTransactionSchema.index({ patientId: 1, createdAt: -1 });
 walletTransactionSchema.index({ source: 1 });
 walletTransactionSchema.index({ withdrawalStatus: 1 }, { sparse: true });
 
+// Finding F-02: Prevent duplicate wallet refunds per appointment
+walletTransactionSchema.index(
+  { appointmentId: 1, source: 1, type: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      appointmentId: { $exists: true, $ne: null },
+      source: "PATIENT_CANCELLATION",
+      type: "CREDIT",
+    },
+  }
+);
+
 export default mongoose.model("WalletTransaction", walletTransactionSchema);

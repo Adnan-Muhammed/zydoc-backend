@@ -223,29 +223,17 @@ export class VerifyPayment {
     }
     // ───────────────────────────────────────────────────────────────────────────
 
-    // Trigger booking confirmation email asynchronously without blocking the response
+    // Trigger booking confirmation email asynchronously without blocking the response (gated by EMAIL_FEATURES)
     if (this.mailService && typeof this.mailService.sendBookingConfirmation === 'function') {
-      // console.log("[VerifyPayment] mailService is available, fetching booking details...");
-      //  payment-booking-confirmation mail service  is commented
       this.appointmentRepository.getBookingDetailsForEmail(appointment._id)
         .then(bookingInfo => {
-          // console.log("[VerifyPayment] Fetched bookingInfo:", bookingInfo);
-          //  payment-booking-confirmation mail service  is commented
-          if (bookingInfo && bookingInfo.patientEmail && bookingInfo.doctorEmail) {
-            // console.log("[VerifyPayment] Invoking sendBookingConfirmation...");
-            // PURPOSE: Sends booking confirmation emails to both patient and doctor
-
-            // SEND THE EMAIL
-            // return this.mailService.sendBookingConfirmation(bookingInfo);
-            console.log("TEST_LOG [Sends booking confirmation emails]:", bookingInfo);
-            return;
+          if (bookingInfo && (bookingInfo.patientEmail || bookingInfo.doctorEmail)) {
+            return this.mailService.sendBookingConfirmation(bookingInfo);
           } else {
-            console.log("[VerifyPayment] Skipped sending email due to missing patientEmail or doctorEmail. Info:", bookingInfo);
+            console.log("[VerifyPayment] Skipped sending email due to missing patientEmail and doctorEmail.");
           }
         })
-        .catch(error => console.error("[VerifyPayment] Error triggering booking confirmation email:", error));
-    } else {
-      console.log("[VerifyPayment] mailService or sendBookingConfirmation method is NOT available on this instance:", this.mailService);
+        .catch(error => console.error("[VerifyPayment] Error triggering booking confirmation email:", error?.message || error));
     }
 
     // Trigger real-time booking notification

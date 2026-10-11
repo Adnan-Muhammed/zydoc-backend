@@ -4,11 +4,30 @@
 # Environment variables
 .env
 .env.local
+.env*.local
+.env.*
+!.env.example
+!.env.*.example
+
+# Test coverage
+/coverage/
+
+# Logs & debugging
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & system artifacts
+.DS_Store
+Thumbs.db
 
 # Planning & Documentation (Entire folder)
 planningFolder/
 
+# Agent artifacts & temporary audit reports
 .agents/
+ZYDOC_BACKEND_AUDIT_REPORT.md
 
 # Uploaded files
-uploads/
+uploads/

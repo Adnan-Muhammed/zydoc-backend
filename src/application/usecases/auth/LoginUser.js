@@ -35,17 +35,17 @@ export class LoginUser {
             user.otp = { code, expiresAt };
             await this.userRepository.update(user);
             
-            try {
-
-                // SEND THE EMAIL
-                                // await this.mailService.sendOtpEmail(email, code);
-
-                // PURPOSE: Sends OTP for unverified account rescue during login
-                // TODO: Uncomment the line below to enable actual email sending in production
-                // await this.mailService.sendOtpEmail(email, code);
-                console.log("TEST_LOG [Sends OTP for unverified account rescue during login]:", { email, code });
-            } catch(e) {
-                console.error("Rescue email failed to send: ", e);
+            // SEND THE EMAIL (Centralized via emailService; gated by EMAIL_FEATURES.LOGIN_RESCUE_OTP)
+            if (this.mailService && (typeof this.mailService.sendLoginRescueOtpEmail === 'function' || typeof this.mailService.sendOtpEmail === 'function')) {
+                try {
+                    if (typeof this.mailService.sendLoginRescueOtpEmail === 'function') {
+                        await this.mailService.sendLoginRescueOtpEmail({ email, otp: code });
+                    } else {
+                        await this.mailService.sendOtpEmail(email, code, 'LOGIN_RESCUE_OTP');
+                    }
+                } catch(e) {
+                    console.error("[LoginUser] Rescue email delivery failed:", e?.message || e);
+                }
             }
  
             const signupToken = this.authService.generateSignupToken(user.id || user._id);

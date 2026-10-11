@@ -33,10 +33,12 @@ export class WebRTCController {
     const extendRoom = new ExtendRoomUseCase(gateway, appointmentRepository);
     const joinWaitingRoom = new JoinWaitingRoomUseCase(gateway, appointmentRepository);
 
-    socket.on("register", ({ userId, role }) => {
-      socket.userId = userId;
-      socket.userRole = role;
-      socket.join(userId);
+    socket.on("register", () => {
+      // Cryptographically verified identity is established exclusively via handshake JWT.
+      // Client-supplied payload is safely ignored to prevent role/identity spoofing.
+      if (socket.userId) {
+        socket.join(socket.userId);
+      }
     });
 
     socket.on("join_room", ({ appointmentId }) => {

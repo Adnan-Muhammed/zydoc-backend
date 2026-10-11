@@ -1,3 +1,32 @@
+/**
+ * Purpose: Standalone assertion-based checks for wallet/refund model fields,
+ * repository interfaces, use-case behavior, cancellation rules, and route
+ * exports, using in-memory mock repositories and mocked appointment methods.
+ * Usage: From the backend root, run `node scripts/testWalletBackend.js`.
+ * This file is not imported by the server and is not selected by `npm test`
+ * (`node --test`); it is referenced only as a manual check in tests/README.md.
+ * Dependencies: Node.js assert, dotenv/config, Mongoose model definitions,
+ * and the project's wallet, payment, appointment, refund, controller, and route
+ * modules. It does not open a MongoDB connection or call an external payment
+ * service; repository and payment behavior under test is mocked.
+ * Origin: Git history added it in commit 340647a ("feat: backend updates for
+ * wallet, admin analytics, and auth", 2026-09-20). Its checks show it was
+ * created to verify the wallet/refund feature changes; no more specific
+ * original request is recorded.
+ * Current relevance: Optional manual development/test utility, not required by
+ * application startup or production runtime.
+ * When needed: Use it for a quick isolated check of the listed wallet/refund
+ * behavior after related changes. Use the regular tests/ suite for the normal
+ * automated test command.
+ * Production impact: Development/testing only; do not deploy or run it as an
+ * application startup command. It loads local environment variables and
+ * temporarily replaces Appointment.findById within this process.
+ * Risks: It does not intentionally modify database records, but its in-process
+ * monkey-patch and final process.exit make it unsuitable for importing into
+ * application code. Review its assertions when the related behavior changes.
+ * Recommendation: Retain if developers still use this focused manual check;
+ * otherwise consider consolidating its coverage into tests/ before removal.
+ */
 import 'dotenv/config';
 import assert from 'assert';
 import mongoose from 'mongoose';

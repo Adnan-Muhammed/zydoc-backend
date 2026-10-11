@@ -132,6 +132,9 @@ export const updateAppointmentStatus = async (req, res) => {
         const { id } = req.params;
         const { status } = req.body;
 
+        const userId = req.user?.id || req.user?._id;
+        const userRole = req.user?.role;
+
         if (!['completed', 'no-show'].includes(status)) {
             return res.status(400).json({ success: false, message: "Invalid status update" });
         }
@@ -139,6 +142,17 @@ export const updateAppointmentStatus = async (req, res) => {
         const appointment = await Appointment.findById(id);
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found" });
+        }
+
+        if (userRole !== 'admin') {
+            const sharedUser = await SharedUser.findById(userId);
+            const doctorProfileId = sharedUser?.profileId;
+            const isAuthorizedDoctor =
+                (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+                ((appointment.doctorId?._id || appointment.doctorId)?.toString() === userId?.toString());
+            if (!isAuthorizedDoctor) {
+                return res.status(403).json({ success: false, message: "Forbidden. Not authorized for this appointment." });
+            }
         }
 
         if (appointment.status !== 'scheduled') {
@@ -164,6 +178,7 @@ export const completeOfflineAppointment = async (req, res) => {
     try {
         const { id } = req.params;
         const { otp } = req.body;
+        const userId = req.user?.id || req.user?._id;
 
         if (!otp || otp.toString().length !== 4) {
             return res.status(400).json({ success: false, message: "A valid 4-digit OTP is required." });
@@ -177,6 +192,16 @@ export const completeOfflineAppointment = async (req, res) => {
         const appointment = await Appointment.findById(id);
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });
+        }
+
+        const sharedUser = await SharedUser.findById(userId);
+        const doctorProfileId = sharedUser?.profileId;
+        const isAuthorizedDoctor =
+            (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+            ((appointment.doctorId?._id || appointment.doctorId)?.toString() === userId?.toString());
+
+        if (!isAuthorizedDoctor) {
+            return res.status(403).json({ success: false, message: "Not authorized for this appointment." });
         }
 
         // Guard: must be offline type and currently scheduled
@@ -233,7 +258,7 @@ export const completeOfflineAppointment = async (req, res) => {
 export const endOnlineConsultation = async (req, res) => {
     try {
         const { id } = req.params;
-        const userId = req.user?._id?.toString();
+        const userId = (req.user?.id || req.user?._id)?.toString();
         const userRole = req.user?.role;
 
         if (userRole !== 'doctor') {
@@ -618,9 +643,6 @@ export const getAvailableSlots = async (req, res) => {
                 isLocked: status === 'locked',
                 isBreak: status === 'unavailable' || status === 'break' || status === 'closed',
                 breakReason,
-                lockedBy: existingApp?.lockedBy || null,
-                razorpayOrderId: existingApp?.razorpayOrderId || null,
-                appointmentId: existingApp?._id || null,
                 isBookable: status === 'available',
                 isExpired: isCutoffPassed,
                 isOngoing,
@@ -1256,6 +1278,7 @@ export const getAppointmentById = async (req, res) => {
     try {
         const { id } = req.params;
         const userId = req.user?.id || req.user?._id;
+        const userRole = req.user?.role;
 
         if (!userId) {
             return res.status(401).json({ success: false, message: "Unauthorized. User ID not found." });
@@ -1267,6 +1290,24 @@ export const getAppointmentById = async (req, res) => {
         
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });
+        }
+
+        // Ownership/Authorization check: Only assigned patient, assigned doctor, or admin
+        if (userRole !== 'admin') {
+            const sharedUser = await SharedUser.findById(userId);
+            const doctorProfileId = sharedUser?.profileId;
+
+            const patientMatches =
+                (appointment.patientId?._id || appointment.patientId)?.toString() === userId.toString() ||
+                (sharedUser?.profileId && (appointment.patientId?._id || appointment.patientId)?.toString() === sharedUser.profileId.toString());
+
+            const doctorMatches =
+                (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+                ((appointment.doctorId?._id || appointment.doctorId)?.toString() === userId.toString());
+
+            if (!patientMatches && !doctorMatches) {
+                return res.status(403).json({ success: false, message: "Access denied. Not authorized for this appointment." });
+            }
         }
 
         const appointmentObj = appointment.toObject();
@@ -1303,7 +1344,7 @@ export const getClinicalContext = async (req, res) => {
         const { id } = req.params;
         const user = req.user;
 
-        if (!user || user.role !== 'doctor') {
+        if (!user || (user.role !== 'doctor' && user.role !== 'admin')) {
             return res.status(403).json({ success: false, message: "Access denied. Doctor clinical privileges required." });
         }
 
@@ -1318,6 +1359,18 @@ export const getClinicalContext = async (req, res) => {
 
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });
+        }
+
+        // Ownership check: Ensure requesting doctor is assigned to this appointment
+        if (user.role === 'doctor') {
+            const sharedUser = await SharedUser.findById(user.id || user._id);
+            const doctorProfileId = sharedUser?.profileId;
+            const isAuthorizedDoctor =
+                (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+                ((appointment.doctorId?._id || appointment.doctorId)?.toString() === (user.id || user._id).toString());
+            if (!isAuthorizedDoctor) {
+                return res.status(403).json({ success: false, message: "Access denied. Not assigned to this appointment." });
+            }
         }
 
         const patientUser = appointment.patientId;
@@ -1399,16 +1452,23 @@ export const saveClinicalNotes = async (req, res) => {
             return res.status(403).json({ success: false, message: "Access denied. Doctor privileges required." });
         }
 
-        // Dual-write: update Appointment for complete backward compatibility
-        const appointment = await Appointment.findByIdAndUpdate(
-            id,
-            { $set: { clinicalNotes: notes || '' } },
-            { new: true }
-        );
-
+        const appointment = await Appointment.findById(id);
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });
         }
+
+        const sharedUser = await SharedUser.findById(user.id || user._id);
+        const doctorProfileId = sharedUser?.profileId;
+        const isAuthorizedDoctor =
+            (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+            ((appointment.doctorId?._id || appointment.doctorId)?.toString() === (user.id || user._id).toString());
+
+        if (!isAuthorizedDoctor) {
+            return res.status(403).json({ success: false, message: "Access denied. Not assigned to this appointment." });
+        }
+
+        appointment.clinicalNotes = notes || '';
+        await appointment.save();
 
         // Upsert into ConsultationRecord
         const consultationRecord = await ConsultationRecord.findOneAndUpdate(
@@ -1452,16 +1512,23 @@ export const savePrescriptions = async (req, res) => {
             return res.status(400).json({ success: false, message: "Prescriptions must be an array." });
         }
 
-        // Dual-write: update Appointment for complete backward compatibility
-        const appointment = await Appointment.findByIdAndUpdate(
-            id,
-            { $set: { prescriptions } },
-            { new: true }
-        );
-
+        const appointment = await Appointment.findById(id);
         if (!appointment) {
             return res.status(404).json({ success: false, message: "Appointment not found." });
         }
+
+        const sharedUser = await SharedUser.findById(user.id || user._id);
+        const doctorProfileId = sharedUser?.profileId;
+        const isAuthorizedDoctor =
+            (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+            ((appointment.doctorId?._id || appointment.doctorId)?.toString() === (user.id || user._id).toString());
+
+        if (!isAuthorizedDoctor) {
+            return res.status(403).json({ success: false, message: "Access denied. Not assigned to this appointment." });
+        }
+
+        appointment.prescriptions = prescriptions;
+        await appointment.save();
 
         // Upsert into ConsultationRecord
         const consultationRecord = await ConsultationRecord.findOneAndUpdate(
@@ -1506,6 +1573,32 @@ export const uploadConsultationFile = async (req, res) => {
             return res.status(400).json({ success: false, message: "No file uploaded." });
         }
 
+        const appointment = await Appointment.findById(id);
+        if (!appointment) {
+            return res.status(404).json({ success: false, message: "Appointment not found." });
+        }
+
+        const userId = user.id || user._id;
+        let isAuthorized = false;
+        if (user.role === 'admin') {
+            isAuthorized = true;
+        } else if (user.role === 'doctor') {
+            const sharedUser = await SharedUser.findById(userId);
+            const doctorProfileId = sharedUser?.profileId;
+            isAuthorized =
+                (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+                ((appointment.doctorId?._id || appointment.doctorId)?.toString() === userId.toString());
+        } else if (user.role === 'patient') {
+            const sharedUser = await SharedUser.findById(userId);
+            isAuthorized =
+                (appointment.patientId?._id || appointment.patientId)?.toString() === userId.toString() ||
+                (sharedUser?.profileId && (appointment.patientId?._id || appointment.patientId)?.toString() === sharedUser.profileId.toString());
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ success: false, message: "Access denied. Not authorized for this appointment." });
+        }
+
         const ext = file.originalname.split('.').pop()?.toLowerCase() || 'file';
         const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
 
@@ -1521,15 +1614,9 @@ export const uploadConsultationFile = async (req, res) => {
         };
 
         // Dual-write: update Appointment for complete backward compatibility
-        const appointment = await Appointment.findByIdAndUpdate(
-            id,
-            { $push: { consultationFiles: newFileItem } },
-            { new: true }
-        );
-
-        if (!appointment) {
-            return res.status(404).json({ success: false, message: "Appointment not found." });
-        }
+        appointment.consultationFiles = appointment.consultationFiles || [];
+        appointment.consultationFiles.push(newFileItem);
+        await appointment.save();
 
         // Upsert into ConsultationRecord
         const consultationRecord = await ConsultationRecord.findOneAndUpdate(

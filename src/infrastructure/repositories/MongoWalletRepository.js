@@ -54,6 +54,26 @@ export class MongoWalletRepository extends WalletRepository {
         throw new Error('Invalid credit amount');
       }
 
+      // Finding F-02: Idempotent check for appointment cancellation refunds
+      if (appointmentId && source === 'PATIENT_CANCELLATION') {
+        const existingTxQuery = WalletTransaction.findOne({
+          appointmentId,
+          source: 'PATIENT_CANCELLATION',
+          type: 'CREDIT',
+        });
+        if (session) existingTxQuery.session(session);
+        const existingTx = await existingTxQuery;
+
+        if (existingTx) {
+          const currentBalance = await this.getBalance(patientId);
+          return {
+            balance: currentBalance,
+            transaction: existingTx,
+            idempotent: true,
+          };
+        }
+      }
+
       const { sharedUserId, patientProfileId } = await this._resolvePatientIdentifiers(patientId);
 
       const updateOpts = session ? { session, returnDocument: 'after' } : { returnDocument: 'after' };
@@ -78,13 +98,37 @@ export class MongoWalletRepository extends WalletRepository {
         createdAt: new Date(),
       };
 
-      const txDocs = await WalletTransaction.create([txPayload], session ? { session } : {});
-      const createdTx = txDocs[0] || txDocs;
+      try {
+        const txDocs = await WalletTransaction.create([txPayload], session ? { session } : {});
+        const createdTx = txDocs[0] || txDocs;
 
-      return {
-        balance: Number(updatedProfile.walletBalance || 0),
-        transaction: createdTx,
-      };
+        return {
+          balance: Number(updatedProfile.walletBalance || 0),
+          transaction: createdTx,
+        };
+      } catch (txCreateErr) {
+        // If duplicate key conflict on concurrent cancellation credit, roll back wallet balance increment
+        if (txCreateErr.code === 11000 && appointmentId && source === 'PATIENT_CANCELLATION') {
+          if (!session) {
+            await Patient.findByIdAndUpdate(
+              patientProfileId,
+              { $inc: { walletBalance: -numAmount } }
+            );
+          }
+          const existingTx = await WalletTransaction.findOne({
+            appointmentId,
+            source: 'PATIENT_CANCELLATION',
+            type: 'CREDIT',
+          });
+          const currentBalance = await this.getBalance(patientId);
+          return {
+            balance: currentBalance,
+            transaction: existingTx,
+            idempotent: true,
+          };
+        }
+        throw txCreateErr;
+      }
     } catch (error) {
       console.error('[MongoWalletRepository.creditWallet] Error:', error);
       throw error;

@@ -95,6 +95,63 @@ export class JoinRoomUseCase {
     if (this.appointmentRepository) {
       try {
         const appointment = await this.appointmentRepository.findById(appointmentId);
+        if (!appointment) {
+          const errMsg = { message: "Consultation appointment not found." };
+          if (this.signalingGateway.socket?.id) {
+            this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+          }
+          if (userId) {
+            this.signalingGateway.emitToUser(userId, "call_error", errMsg);
+          }
+          return;
+        }
+
+        // 🔒 Enforce Participant Authorization (INT-002)
+        let isAuthorized = false;
+        if (normalizedRole === 'patient') {
+          if (userId && String(appointment.patientId?._id || appointment.patientId) === String(userId)) {
+            isAuthorized = true;
+          } else if (userId) {
+            try {
+              const mongoose = (await import('mongoose')).default || (await import('mongoose'));
+              const SharedUser = mongoose.models.SharedUser || mongoose.model('SharedUser');
+              const patientUser = await SharedUser.findById(userId).select('profileId');
+              if (patientUser?.profileId && String(patientUser.profileId) === String(appointment.patientId?._id || appointment.patientId)) {
+                isAuthorized = true;
+              }
+            } catch (authErr) {
+              console.error("[JoinRoomUseCase] Error validating patient participant identity:", authErr);
+            }
+          }
+        } else if (normalizedRole === 'doctor') {
+          if (userId && String(appointment.doctorId?._id || appointment.doctorId) === String(userId)) {
+            isAuthorized = true;
+          } else if (userId) {
+            try {
+              const mongoose = (await import('mongoose')).default || (await import('mongoose'));
+              const SharedUser = mongoose.models.SharedUser || mongoose.model('SharedUser');
+              const doctorUser = await SharedUser.findById(userId).select('profileId');
+              if (doctorUser?.profileId && String(doctorUser.profileId) === String(appointment.doctorId?._id || appointment.doctorId)) {
+                isAuthorized = true;
+              }
+            } catch (authErr) {
+              console.error("[JoinRoomUseCase] Error validating doctor participant identity:", authErr);
+            }
+          }
+        }
+
+        if (!isAuthorized) {
+          console.warn(`[JoinRoomUseCase] Blocked unauthorized join attempt for room ${roomId} by user ${userId} (${role}).`);
+          const errMsg = { message: "Unauthorized: You are not an assigned participant in this consultation." };
+          if (this.signalingGateway.socket?.id) {
+            this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
+          }
+          if (userId) {
+            this.signalingGateway.emitToUser(userId, "call_error", errMsg);
+          }
+          return; // Block unauthorized room join
+        }
+
         if (appointment) {
           // Block in-person / offline appointments from joining video call
           const consultType = (appointment.consultationType || '').toLowerCase();
