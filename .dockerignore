@@ -1,0 +1,37 @@
+# Ignore node_modules (let Docker install clean Linux binaries)
+node_modules/
+npm-debug.log
+
+# Ignore environment files and secrets
+.env
+.env.*
+*.pem
+*.key
+*.cert
+*.crt
+serviceAccountKey*.json
+*firebase-adminsdk*.json
+
+# Ignore local uploaded files and temp directories
+uploads/
+temp/
+tmp/
+
+# Ignore Git and repository metadata
+.git/
+.gitignore
+.agents/
+planningFolder/
+*.md
+
+# Ignore test files & logs
+coverage/
+tests/
+logs/
+*.log
+
+# Ignore OS & IDE files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,33 +1,106 @@
-
+# ==========================================
+# Dependencies
+# ==========================================
+node_modules/
 /node_modules
+jspm_packages/
 
-# Environment variables
+# ==========================================
+# Environment Variables & Secrets
+# ==========================================
 .env
 .env.local
 .env*.local
+.env.development.local
+.env.test.local
+.env.production.local
 .env.*
 !.env.example
 !.env.*.example
 
-# Test coverage
-/coverage/
+# Credentials & Service Accounts (Firebase, AWS, SSL)
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+serviceAccountKey*.json
+*firebase-adminsdk*.json
+*firebase*.json
 
-# Logs & debugging
+# ==========================================
+# Uploaded & Temporary User Files
+# ==========================================
+uploads/
+/uploads/
+tmp/
+temp/
+*.tmp
+
+# ==========================================
+# Testing & Coverage
+# ==========================================
+coverage/
+/coverage/
+*.lcov
+.nyc_output
+
+# ==========================================
+# Logs & Debugging
+# ==========================================
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# OS & system artifacts
+# ==========================================
+# Process IDs & Runtime
+# ==========================================
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# ==========================================
+# Build & Distribution Outputs
+# ==========================================
+dist/
+build/
+
+# ==========================================
+# Docker & Cloud Provider Local Artifacts
+# ==========================================
+docker-compose.override.yml
+.aws/
+
+# ==========================================
+# OS & System Artifacts
+# ==========================================
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 
-# Planning & Documentation (Entire folder)
-planningFolder/
+# ==========================================
+# IDEs & Editors
+# ==========================================
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# Agent artifacts & temporary audit reports
+# ==========================================
+# Planning, Agent & Audit Artifacts
+# ==========================================
 .agents/
+planningFolder/
 ZYDOC_BACKEND_AUDIT_REPORT.md
-
-# Uploaded files
-uploads/
