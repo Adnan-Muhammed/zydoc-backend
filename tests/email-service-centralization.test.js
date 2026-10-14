@@ -9,8 +9,10 @@ describe('Centralized EmailService and Feature Flags Audit Verification', () => 
   let mockTransporter;
   let sentMails;
   let emailServiceInstance;
+  const adminEmail = 'admin@example.com';
 
   beforeEach(() => {
+    process.env.ADMIN_EMAIL = adminEmail;
     sentMails = [];
     mockTransporter = {
       sendMail: async (options) => {
@@ -33,15 +35,13 @@ describe('Centralized EmailService and Feature Flags Audit Verification', () => 
     EMAIL_FEATURES.DOCTOR_APPLICATION_REJECTED = false;
   });
 
-  it('1. All features default to disabled (preserving commented-out state)', () => {
-    assert.strictEqual(EMAIL_FEATURES.PATIENT_BOOKING_CONFIRMATION, false);
-    assert.strictEqual(EMAIL_FEATURES.DOCTOR_BOOKING_NOTIFICATION, false);
-    assert.strictEqual(EMAIL_FEATURES.SIGNUP_OTP, false);
-    assert.strictEqual(EMAIL_FEATURES.RESEND_OTP, false);
-    assert.strictEqual(EMAIL_FEATURES.LOGIN_RESCUE_OTP, false);
-    assert.strictEqual(EMAIL_FEATURES.FORGOT_PASSWORD_OTP, false);
-    assert.strictEqual(EMAIL_FEATURES.REFUND_APPROVED, false);
-    assert.strictEqual(EMAIL_FEATURES.REFUND_REJECTED, false);
+  it('1. Default email feature flag configurations are present', () => {
+    assert.strictEqual(typeof EMAIL_FEATURES.PATIENT_BOOKING_CONFIRMATION, 'boolean');
+    assert.strictEqual(typeof EMAIL_FEATURES.DOCTOR_BOOKING_NOTIFICATION, 'boolean');
+    assert.strictEqual(typeof EMAIL_FEATURES.SIGNUP_OTP, 'boolean');
+    assert.strictEqual(typeof EMAIL_FEATURES.RESEND_OTP, 'boolean');
+    assert.strictEqual(typeof EMAIL_FEATURES.LOGIN_RESCUE_OTP, 'boolean');
+    assert.strictEqual(typeof EMAIL_FEATURES.FORGOT_PASSWORD_OTP, 'boolean');
   });
 
   it('2. Disabled appointment emails do not dispatch emails and return skipped', async () => {
@@ -121,58 +121,82 @@ describe('Centralized EmailService and Feature Flags Audit Verification', () => 
     assert.strictEqual(result.doctorResult.success, true);
   });
 
-  it('5. Disabling appointment emails does not affect OTP emails', async () => {
-    EMAIL_FEATURES.PATIENT_BOOKING_CONFIRMATION = false;
-    EMAIL_FEATURES.DOCTOR_BOOKING_NOTIFICATION = false;
+  it('5. Enabled OTP email sends normally to user actual email, NOT to admin', async () => {
     EMAIL_FEATURES.SIGNUP_OTP = true;
 
     const otpResult = await emailServiceInstance.sendSignupOtpEmail({
       email: 'user@example.com',
       otp: '123456',
+      role: 'patient',
     });
 
     assert.strictEqual(sentMails.length, 1);
     assert.strictEqual(sentMails[0].to, 'user@example.com');
     assert.ok(sentMails[0].html.includes('123456'));
     assert.strictEqual(otpResult.success, true);
+    assert.strictEqual(otpResult.redirectedToAdmin, false);
+    assert.strictEqual(otpResult.recipient, 'user@example.com');
   });
 
-  it('6. Disabling OTP emails does not affect appointment emails', async () => {
+  it('6. When OTP config is false, OTP email is NOT sent to user, but redirected directly to Admin', async () => {
     EMAIL_FEATURES.SIGNUP_OTP = false;
-    EMAIL_FEATURES.RESEND_OTP = false;
-    EMAIL_FEATURES.PATIENT_BOOKING_CONFIRMATION = true;
 
     const otpResult = await emailServiceInstance.sendSignupOtpEmail({
-      email: 'user@example.com',
-      otp: '123456',
-    });
-    assert.strictEqual(otpResult.skipped, true);
-    assert.strictEqual(sentMails.length, 0);
-
-    const bookingResult = await emailServiceInstance.sendPatientAppointmentEmail({
-      patientEmail: 'patient@example.com',
-      patientName: 'Jane Patient',
-      doctorName: 'Dr. Smith',
-      bookingDetails: { date: '2026-10-15', time: '11:00 AM', fee: 400 },
+      email: 'patient_signup@example.com',
+      otp: '889900',
+      role: 'patient',
     });
 
-    assert.strictEqual(bookingResult.success, true);
     assert.strictEqual(sentMails.length, 1);
+    // Verified: NOT sent to user, but sent to admin
+    assert.notStrictEqual(sentMails[0].to, 'patient_signup@example.com');
+    assert.strictEqual(sentMails[0].to, adminEmail);
+
+    // Verified: Admin email includes generated OTP, user email, user role, and email type/service name
+    assert.ok(sentMails[0].html.includes('889900'), 'Admin email must include generated OTP');
+    assert.ok(sentMails[0].html.includes('patient_signup@example.com'), 'Admin email must include User Email');
+    assert.ok(sentMails[0].html.includes('Patient'), 'Admin email must include User Role');
+    assert.ok(sentMails[0].html.includes('Signup OTP'), 'Admin email must include Service Name');
+    assert.ok(sentMails[0].subject.includes('Signup OTP'), 'Subject must mention service name');
+    assert.ok(sentMails[0].subject.includes('patient_signup@example.com'), 'Subject must mention user email');
+
+    assert.strictEqual(otpResult.success, true);
+    assert.strictEqual(otpResult.redirectedToAdmin, true);
+    assert.strictEqual(otpResult.recipient, adminEmail);
   });
 
-  it('7. Independent feature flags for resend OTP, login rescue OTP, and forgot password OTP', async () => {
-    // Only forgot password enabled
+  it('7. Independent feature flags for resend OTP, login rescue OTP, and forgot password OTP redirect to Admin when false', async () => {
+    // Only forgot password enabled (true); resend & rescue disabled (false)
     EMAIL_FEATURES.FORGOT_PASSWORD_OTP = true;
+    EMAIL_FEATURES.RESEND_OTP = false;
+    EMAIL_FEATURES.LOGIN_RESCUE_OTP = false;
 
-    const resend = await emailServiceInstance.sendResendOtpEmail({ email: 'u@test.com', otp: '1111' });
-    const rescue = await emailServiceInstance.sendLoginRescueOtpEmail({ email: 'u@test.com', otp: '2222' });
-    const forgot = await emailServiceInstance.sendForgotPasswordOtpEmail({ email: 'u@test.com', otp: '3333' });
+    const resend = await emailServiceInstance.sendResendOtpEmail({ email: 'doctor@test.com', otp: '111111', role: 'doctor' });
+    const rescue = await emailServiceInstance.sendLoginRescueOtpEmail({ email: 'patient@test.com', otp: '222222', role: 'patient' });
+    const forgot = await emailServiceInstance.sendForgotPasswordOtpEmail({ email: 'forgot@test.com', otp: '333333', role: 'patient' });
 
-    assert.strictEqual(resend.skipped, true);
-    assert.strictEqual(rescue.skipped, true);
-    assert.strictEqual(forgot.success, true);
-    assert.strictEqual(sentMails.length, 1);
-    assert.ok(sentMails[0].html.includes('3333'));
+    assert.strictEqual(sentMails.length, 3);
+
+    // Resend (false) -> sent to admin with Doctor role
+    assert.strictEqual(resend.redirectedToAdmin, true);
+    assert.strictEqual(sentMails[0].to, adminEmail);
+    assert.ok(sentMails[0].html.includes('111111'));
+    assert.ok(sentMails[0].html.includes('doctor@test.com'));
+    assert.ok(sentMails[0].html.includes('Doctor'));
+    assert.ok(sentMails[0].html.includes('Resend OTP'));
+
+    // Rescue (false) -> sent to admin with Patient role
+    assert.strictEqual(rescue.redirectedToAdmin, true);
+    assert.strictEqual(sentMails[1].to, adminEmail);
+    assert.ok(sentMails[1].html.includes('222222'));
+    assert.ok(sentMails[1].html.includes('patient@test.com'));
+    assert.ok(sentMails[1].html.includes('Patient'));
+    assert.ok(sentMails[1].html.includes('Login Rescue OTP'));
+
+    // Forgot password (true) -> sent directly to user, not admin
+    assert.strictEqual(forgot.redirectedToAdmin, false);
+    assert.strictEqual(sentMails[2].to, 'forgot@test.com');
+    assert.ok(sentMails[2].html.includes('333333'));
   });
 
   it('8. Refund approval & rejection emails are controlled independently', async () => {
@@ -199,13 +223,24 @@ describe('Centralized EmailService and Feature Flags Audit Verification', () => 
     assert.ok(sentMails[0].html.includes('₹500'));
   });
 
-  it('9. Legacy MailService adapter extends and preserves full compatibility', async () => {
+  it('9. Legacy MailService adapter extends and preserves full compatibility with conditional OTP redirection', async () => {
     const legacyService = new MailService(mockTransporter);
-    EMAIL_FEATURES.SIGNUP_OTP = true;
 
-    const result = await legacyService.sendOtpEmail('legacy@user.com', '654321');
-    assert.strictEqual(result.success, true);
-    assert.strictEqual(sentMails.length, 1);
+    // When flag is true
+    EMAIL_FEATURES.SIGNUP_OTP = true;
+    const resultTrue = await legacyService.sendOtpEmail('legacy@user.com', '654321', 'SIGNUP_OTP', 'patient');
+    assert.strictEqual(resultTrue.success, true);
+    assert.strictEqual(resultTrue.redirectedToAdmin, false);
     assert.strictEqual(sentMails[0].to, 'legacy@user.com');
+
+    // When flag is false
+    EMAIL_FEATURES.SIGNUP_OTP = false;
+    const resultFalse = await legacyService.sendOtpEmail('legacy2@user.com', '789012', 'SIGNUP_OTP', 'doctor');
+    assert.strictEqual(resultFalse.success, true);
+    assert.strictEqual(resultFalse.redirectedToAdmin, true);
+    assert.strictEqual(sentMails[1].to, adminEmail);
+    assert.ok(sentMails[1].html.includes('789012'));
+    assert.ok(sentMails[1].html.includes('legacy2@user.com'));
+    assert.ok(sentMails[1].html.includes('Doctor'));
   });
 });

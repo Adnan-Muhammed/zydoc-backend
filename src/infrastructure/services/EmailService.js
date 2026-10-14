@@ -13,19 +13,19 @@ import nodemailer from 'nodemailer';
  */
 export const EMAIL_FEATURES = {
   // Appointment notifications
-  PATIENT_BOOKING_CONFIRMATION: true,
+  PATIENT_BOOKING_CONFIRMATION: false,
   DOCTOR_BOOKING_NOTIFICATION: true,
 
   // Authentication & OTP notifications
-  SIGNUP_OTP: true,
-  RESEND_OTP: true,
-  LOGIN_RESCUE_OTP: true,
-  FORGOT_PASSWORD_OTP: true,
+  SIGNUP_OTP: false,
+  RESEND_OTP: false,
+  LOGIN_RESCUE_OTP: false,
+  FORGOT_PASSWORD_OTP: false,
 
   // Admin action notifications
-  REFUND_APPROVED: false,
-  REFUND_REJECTED: false,
-  DOCTOR_APPLICATION_APPROVED: false,
+  REFUND_APPROVED: true,
+  REFUND_REJECTED: true,
+  DOCTOR_APPLICATION_APPROVED: true,
   DOCTOR_APPLICATION_REJECTED: false,
 };
 
@@ -68,6 +68,124 @@ export class EmailService {
   getSenderAddress() {
     const user = process.env.EMAIL_USER || 'no-reply@zydoc.com';
     return `"ZyDoc Consulting" <${user}>`;
+  }
+
+  /**
+   * Helper to resolve the designated admin notification email address.
+   */
+  getAdminEmailAddress() {
+    return process.env.ADMIN_EMAIL || process.env.EMAIL_USER || 'admin@zydoc.com';
+  }
+
+  /**
+   * Builds mail options for redirecting OTP emails to Admin when feature flag is disabled.
+   * Includes generated OTP, user's email, user's role, and email type / service name.
+   * @private
+   */
+  _buildAdminOtpMailOptions({ adminEmail, userEmail, otp, role = 'patient', serviceName, featureKey }) {
+    const formattedRole = role ? (role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()) : 'Patient';
+
+    return {
+      from: this.getSenderAddress(),
+      to: adminEmail,
+      subject: `[TESTING MODE] ${serviceName} Notification - ${userEmail}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 24px; border-radius: 8px; background-color: #ffffff;">
+          <div style="background-color: #fef3c7; border: 1px solid #f59e0b; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px;">
+            <h3 style="margin: 0; color: #92400e; font-size: 15px; font-weight: bold;">⚠️ Testing / Spam Prevention Mode Active</h3>
+            <p style="margin: 4px 0 0 0; color: #b45309; font-size: 13px; line-height: 1.4;">
+              Feature flag <code>${featureKey}</code> is set to <strong>false</strong>. This OTP email was intercepted and redirected to the Administrator instead of the user's actual email.
+            </p>
+          </div>
+
+          <h2 style="color: #1f2937; margin-top: 0; font-size: 20px; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
+            ${serviceName} Intercepted
+          </h2>
+
+          <div style="background-color: #f8fafc; padding: 18px; border-radius: 8px; margin: 20px 0; border: 1px solid #e2e8f0;">
+            <p style="margin: 6px 0; color: #334155; font-size: 14px;"><strong>Email Type / Service Name:</strong> ${serviceName}</p>
+            <p style="margin: 6px 0; color: #334155; font-size: 14px;"><strong>User's Email:</strong> <span style="color: #2563eb; font-weight: 600;">${userEmail}</span></p>
+            <p style="margin: 6px 0; color: #334155; font-size: 14px;"><strong>User's Role:</strong> <span style="background-color: #e0e7ff; color: #3730a3; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; text-transform: uppercase;">${formattedRole}</span></p>
+            
+            <div style="margin-top: 20px; text-align: center; background-color: #ffffff; padding: 20px; border-radius: 8px; border: 2px dashed #2563eb;">
+              <span style="font-size: 12px; font-weight: bold; color: #64748b; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 6px;">Generated OTP Code</span>
+              <span style="font-size: 34px; font-weight: 800; font-family: 'Courier New', Courier, monospace; letter-spacing: 6px; color: #1d4ed8;">${otp}</span>
+            </div>
+          </div>
+
+          <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 15px 0 0 0;">
+            ZyDoc Security &amp; Testing Notification • Timestamp: ${new Date().toISOString()}
+          </p>
+        </div>
+      `,
+      text: `[TESTING MODE] ${serviceName} Notification\n\n` +
+        `This OTP was redirected to the administrator because ${featureKey} is disabled (false).\n\n` +
+        `Email Type / Service Name: ${serviceName}\n` +
+        `User Email: ${userEmail}\n` +
+        `User Role: ${formattedRole}\n` +
+        `Generated OTP: ${otp}\n` +
+        `Timestamp: ${new Date().toISOString()}\n`,
+    };
+  }
+
+  /**
+   * Dispatches an OTP email conditionally:
+   * - If feature is enabled (true): sends normal email to user's actual email address.
+   * - If feature is disabled (false): redirects email to the admin email address with user/role/OTP details.
+   * @private
+   */
+  async _dispatchOtpEmail({ featureKey, userEmail, otp, role = 'patient', serviceName, userMailOptions, logContext }) {
+    const isFeatureEnabled = !!EMAIL_FEATURES[featureKey];
+
+    if (isFeatureEnabled) {
+      try {
+        const transporter = this.getTransporter();
+        const info = await transporter.sendMail(userMailOptions);
+        return {
+          success: true,
+          skipped: false,
+          redirectedToAdmin: false,
+          recipient: userEmail,
+          messageId: info?.messageId,
+        };
+      } catch (error) {
+        console.error(`[EmailService] Failed to send ${logContext} to ${userEmail}:`, error?.message || error);
+        throw error;
+      }
+    }
+
+    // Testing / false condition: Do NOT send to user; redirect directly to Admin
+    const adminEmail = this.getAdminEmailAddress();
+    const adminMailOptions = this._buildAdminOtpMailOptions({
+      adminEmail,
+      userEmail,
+      otp,
+      role,
+      serviceName,
+      featureKey,
+    });
+
+    try {
+      const transporter = this.getTransporter();
+      const info = await transporter.sendMail(adminMailOptions);
+      return {
+        success: true,
+        skipped: false,
+        redirectedToAdmin: true,
+        recipient: adminEmail,
+        messageId: info?.messageId,
+      };
+    } catch (error) {
+      console.error(`[EmailService] Failed to send ${logContext} to admin (${adminEmail}):`, error?.message || error);
+      // Return safe failure in test/dev so the overall auth/OTP flow is not broken
+      return {
+        success: false,
+        skipped: false,
+        redirectedToAdmin: true,
+        recipient: adminEmail,
+        error: error?.message || String(error),
+      };
+    }
   }
 
   /**
@@ -239,7 +357,7 @@ export class EmailService {
   /**
    * Sends OTP email for signup registration.
    */
-  async sendSignupOtpEmail({ email, otp }) {
+  async sendSignupOtpEmail({ email, otp, role = 'patient' }) {
     const mailOptions = this._buildOtpMailOptions(
       email,
       otp,
@@ -247,9 +365,13 @@ export class EmailService {
       'Hello, thank you for registering with ZyDoc. Please use the verification code below to complete your registration. This code is valid for 10 minutes.'
     );
 
-    return await this._dispatchEmail({
+    return await this._dispatchOtpEmail({
       featureKey: 'SIGNUP_OTP',
-      mailOptions,
+      userEmail: email,
+      otp,
+      role,
+      serviceName: 'Signup OTP',
+      userMailOptions: mailOptions,
       logContext: 'Signup OTP',
     });
   }
@@ -257,7 +379,7 @@ export class EmailService {
   /**
    * Sends OTP email for resend OTP requests.
    */
-  async sendResendOtpEmail({ email, otp }) {
+  async sendResendOtpEmail({ email, otp, role = 'patient' }) {
     const mailOptions = this._buildOtpMailOptions(
       email,
       otp,
@@ -265,9 +387,13 @@ export class EmailService {
       'You requested a new verification code. Please use the code below to verify your ZyDoc account. This code is valid for 10 minutes.'
     );
 
-    return await this._dispatchEmail({
+    return await this._dispatchOtpEmail({
       featureKey: 'RESEND_OTP',
-      mailOptions,
+      userEmail: email,
+      otp,
+      role,
+      serviceName: 'Resend OTP',
+      userMailOptions: mailOptions,
       logContext: 'Resend OTP',
     });
   }
@@ -275,7 +401,7 @@ export class EmailService {
   /**
    * Sends rescue OTP email when an unverified user attempts to log in.
    */
-  async sendLoginRescueOtpEmail({ email, otp }) {
+  async sendLoginRescueOtpEmail({ email, otp, role = 'patient' }) {
     const mailOptions = this._buildOtpMailOptions(
       email,
       otp,
@@ -283,9 +409,13 @@ export class EmailService {
       'Your ZyDoc account requires verification before logging in. Please use the code below to complete your verification.'
     );
 
-    return await this._dispatchEmail({
+    return await this._dispatchOtpEmail({
       featureKey: 'LOGIN_RESCUE_OTP',
-      mailOptions,
+      userEmail: email,
+      otp,
+      role,
+      serviceName: 'Login Rescue OTP',
+      userMailOptions: mailOptions,
       logContext: 'Login Rescue OTP',
     });
   }
@@ -293,7 +423,7 @@ export class EmailService {
   /**
    * Sends OTP email for password reset requests.
    */
-  async sendForgotPasswordOtpEmail({ email, otp }) {
+  async sendForgotPasswordOtpEmail({ email, otp, role = 'patient' }) {
     const mailOptions = this._buildOtpMailOptions(
       email,
       otp,
@@ -301,33 +431,44 @@ export class EmailService {
       'We received a request to reset your ZyDoc account password. Please use the verification code below to proceed. This code is valid for 10 minutes.'
     );
 
-    return await this._dispatchEmail({
+    return await this._dispatchOtpEmail({
       featureKey: 'FORGOT_PASSWORD_OTP',
-      mailOptions,
+      userEmail: email,
+      otp,
+      role,
+      serviceName: 'Forgot Password OTP',
+      userMailOptions: mailOptions,
       logContext: 'Forgot Password OTP',
     });
   }
 
   /**
    * Generic backwards-compatible OTP dispatch method.
-   * Maps context to the corresponding feature flag.
+   * Maps context to the corresponding feature flag and passes role.
    */
-  async sendOtpEmail(email, otp, context = 'SIGNUP_OTP') {
+  async sendOtpEmail(email, otp, context = 'SIGNUP_OTP', role = 'patient') {
     switch (context) {
       case 'FORGOT_PASSWORD':
       case 'FORGOT_PASSWORD_OTP':
-        return await this.sendForgotPasswordOtpEmail({ email, otp });
+        return await this.sendForgotPasswordOtpEmail({ email, otp, role });
       case 'RESEND':
       case 'RESEND_OTP':
-        return await this.sendResendOtpEmail({ email, otp });
+        return await this.sendResendOtpEmail({ email, otp, role });
       case 'LOGIN_RESCUE':
       case 'LOGIN_RESCUE_OTP':
-        return await this.sendLoginRescueOtpEmail({ email, otp });
+        return await this.sendLoginRescueOtpEmail({ email, otp, role });
       case 'SIGNUP':
       case 'SIGNUP_OTP':
       default:
-        return await this.sendSignupOtpEmail({ email, otp });
+        return await this.sendSignupOtpEmail({ email, otp, role });
     }
+  }
+
+  /**
+   * Helper to check whether an OTP feature flag is enabled.
+   */
+  isOtpFeatureEnabled(featureKey) {
+    return Boolean(EMAIL_FEATURES[featureKey]);
   }
 
   // ==========================================================================

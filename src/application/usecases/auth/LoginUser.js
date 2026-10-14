@@ -1,11 +1,13 @@
 
 // src/application/usecases/auth/LoginUser.js
+import { EMAIL_FEATURES } from '../../../infrastructure/services/EmailService.js';
 
 export class UnverifiedAccountError extends Error {
-    constructor(message, signupToken) {
+    constructor(message, signupToken, otp = null) {
         super(message);
         this.name = 'UnverifiedAccountError';
         this.signupToken = signupToken;
+        this.otp = otp;
     }
 }
 
@@ -35,13 +37,15 @@ export class LoginUser {
             user.otp = { code, expiresAt };
             await this.userRepository.update(user);
             
-            // SEND THE EMAIL (Centralized via emailService; gated by EMAIL_FEATURES.LOGIN_RESCUE_OTP)
+            const userRole = user.role || 'patient';
+
+            // SEND THE EMAIL (Centralized via emailService; redirected to admin if false)
             if (this.mailService && (typeof this.mailService.sendLoginRescueOtpEmail === 'function' || typeof this.mailService.sendOtpEmail === 'function')) {
                 try {
                     if (typeof this.mailService.sendLoginRescueOtpEmail === 'function') {
-                        await this.mailService.sendLoginRescueOtpEmail({ email, otp: code });
+                        await this.mailService.sendLoginRescueOtpEmail({ email, otp: code, role: userRole });
                     } else {
-                        await this.mailService.sendOtpEmail(email, code, 'LOGIN_RESCUE_OTP');
+                        await this.mailService.sendOtpEmail(email, code, 'LOGIN_RESCUE_OTP', userRole);
                     }
                 } catch(e) {
                     console.error("[LoginUser] Rescue email delivery failed:", e?.message || e);
@@ -49,7 +53,12 @@ export class LoginUser {
             }
  
             const signupToken = this.authService.generateSignupToken(user.id || user._id);
-            throw new UnverifiedAccountError('Please verify your email before logging in.', signupToken);
+            const isOtpConfigDisabled = !EMAIL_FEATURES.LOGIN_RESCUE_OTP;
+            throw new UnverifiedAccountError(
+                'Please verify your email before logging in.',
+                signupToken,
+                isOtpConfigDisabled ? code : null
+            );
         }
 
         if (user.role === 'admin') {

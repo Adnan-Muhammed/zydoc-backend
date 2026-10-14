@@ -232,13 +232,18 @@ export class AuthController {
       });
     } catch (error) {
       if (error.name === 'UnverifiedAccountError') {
-        return res.status(403).json({ 
+        const errorResponse = { 
           success: false, 
           message: error.message,
           requiresVerification: true,
           email: req.body.email,
           signupToken: error.signupToken
-        });
+        };
+        if (error.otp) {
+          errorResponse.otp = error.otp;
+          errorResponse.code = error.otp;
+        }
+        return res.status(403).json(errorResponse);
       }
 
       if (

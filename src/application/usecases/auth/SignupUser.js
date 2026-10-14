@@ -1,9 +1,10 @@
 // zydoc-backend/src/usecases/auth/SignupUser.js
 import { User } from '../../../domain/entities/User.js';
+import { EMAIL_FEATURES } from '../../../infrastructure/services/EmailService.js';
 
 export class SignupUser {
 
- 
+
 
     // We now create two records: the Profile and the Identity.
     constructor(userRepository, authService, otpService, mailService) {
@@ -69,21 +70,23 @@ export class SignupUser {
 
         const newSignupToken = this.authService.generateSignupToken(savedUser.id || savedUser._id);
 
-        // 4. SEND THE EMAIL (Centralized via emailService; gated by EMAIL_FEATURES.SIGNUP_OTP)
+        // 4. SEND THE EMAIL (Centralized via emailService; redirected to admin if false)
         if (this.mailService && (typeof this.mailService.sendSignupOtpEmail === 'function' || typeof this.mailService.sendOtpEmail === 'function')) {
             try {
                 if (typeof this.mailService.sendSignupOtpEmail === 'function') {
-                    await this.mailService.sendSignupOtpEmail({ email, otp: code });
+                    await this.mailService.sendSignupOtpEmail({ email, otp: code, role });
                 } else {
-                    await this.mailService.sendOtpEmail(email, code, 'SIGNUP_OTP');
+                    await this.mailService.sendOtpEmail(email, code, 'SIGNUP_OTP', role);
                 }
             } catch (error) {
                 console.error("[SignupUser] Email delivery failed:", error?.message || error);
             }
         }
         
+        const isOtpConfigDisabled = !EMAIL_FEATURES.SIGNUP_OTP;
+
         return { 
-            code, // We can optionally remove this from payload for security if it's sent via email
+            ...(isOtpConfigDisabled ? { otp: code, code } : {}),
             success: true, 
             message: "Please verify your email",
             signupToken: newSignupToken
