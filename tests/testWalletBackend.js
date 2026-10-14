@@ -2,7 +2,7 @@
  * Purpose: Standalone assertion-based checks for wallet/refund model fields,
  * repository interfaces, use-case behavior, cancellation rules, and route
  * exports, using in-memory mock repositories and mocked appointment methods.
- * Usage: From the backend root, run `node scripts/testWalletBackend.js`.
+ * Usage: From the backend root, run `node tests/testWalletBackend.js`.
  * This file is not imported by the server and is not selected by `npm test`
  * (`node --test`); it is referenced only as a manual check in tests/README.md.
  * Dependencies: Node.js assert, dotenv/config, Mongoose model definitions,
@@ -65,11 +65,11 @@ assert(paymentMethodPath, 'Appointment must have paymentMethod field');
 assert(paymentMethodPath.enumValues.includes('FULL_ONLINE'), 'paymentMethod must include FULL_ONLINE');
 assert(paymentMethodPath.enumValues.includes('FULL_WALLET'), 'paymentMethod must include FULL_WALLET');
 assert(paymentMethodPath.enumValues.includes('SPLIT'), 'paymentMethod must include SPLIT');
-
+  
 assert(Appointment.schema.path('feeBreakdown.totalFee'), 'Appointment must have feeBreakdown.totalFee');
 assert(Appointment.schema.path('feeBreakdown.walletDeducted'), 'Appointment must have feeBreakdown.walletDeducted');
 assert(Appointment.schema.path('feeBreakdown.onlinePaid'), 'Appointment must have feeBreakdown.onlinePaid');
-console.log('✔ Appointment schema additions verified');
+console.log('✔ Appointment schema additions verified'); 
 
 console.log('\n--- STEP 2: Verifying Domain & Repositories ---');
 import { WalletRepository } from '../src/domain/repositories/WalletRepository.js';

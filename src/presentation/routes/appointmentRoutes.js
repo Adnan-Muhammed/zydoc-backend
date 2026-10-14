@@ -24,7 +24,7 @@ import {
   savePrescriptions,
   uploadConsultationFile,
 } from "../controllers/AppointmentController.js";
-import upload from "../middleware/uploadMiddleware.js";
+import upload, { verifyUploadSignatures } from "../middleware/uploadMiddleware.js";
 import { createRazorpayOrder, verifyPayment } from "../controllers/PaymentController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOnly } from "../middleware/adminMiddleware.js";
@@ -65,7 +65,7 @@ router.post("/verify-payment", protect, verifyPayment);
 router.get("/:id/clinical-context", protect, getClinicalContext);
 router.post("/:id/clinical-notes", protect, preventSuspendedDoctorAction, saveClinicalNotes);
 router.post("/:id/prescriptions", protect, preventSuspendedDoctorAction, savePrescriptions);
-router.post("/:id/consultation-files", protect, upload.single("file"), preventSuspendedDoctorAction, uploadConsultationFile);
+router.post("/:id/consultation-files", protect, upload.single("file"), verifyUploadSignatures(), preventSuspendedDoctorAction, uploadConsultationFile);
 
 router.get("/:id", protect, getAppointmentById);
 

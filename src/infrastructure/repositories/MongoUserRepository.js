@@ -724,7 +724,13 @@ export class MongoUserRepository extends UserRepository {
       avatarUrl: p.avatarUrl,
       expertiseTags: p.expertiseTags,
       languages: p.languages,
-      qualifications: p.qualifications,
+      qualifications: Array.isArray(p.qualifications)
+        ? p.qualifications.map(q => ({
+            degree: q.degree || "",
+            institution: q.institution || q.university || "",
+            year: q.year || "",
+          }))
+        : [],
       consultationSettings: p.consultationSettings,
       workingHours: p.workingHours,
       slotDuration: p.slotDuration || 15,
@@ -773,7 +779,13 @@ export class MongoUserRepository extends UserRepository {
       avatarUrl: doctorProfile.avatarUrl,
       expertiseTags: doctorProfile.expertiseTags,
       languages: doctorProfile.languages,
-      qualifications: doctorProfile.qualifications,
+      qualifications: Array.isArray(doctorProfile.qualifications)
+        ? doctorProfile.qualifications.map(q => ({
+            degree: q.degree || "",
+            institution: q.institution || q.university || "",
+            year: q.year || "",
+          }))
+        : [],
       consultationSettings: doctorProfile.consultationSettings,
       workingHours: doctorProfile.workingHours,
       slotDuration: doctorProfile.slotDuration || 15,

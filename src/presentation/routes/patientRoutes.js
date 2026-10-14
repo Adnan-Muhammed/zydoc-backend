@@ -1,7 +1,7 @@
 // src/presentation/routes/patientRoutes.js
 
 import express from "express";
-import upload from "../middleware/uploadMiddleware.js";
+import upload, { verifyUploadSignatures } from "../middleware/uploadMiddleware.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { MongoUserRepository } from "../../infrastructure/repositories/MongoUserRepository.js";
 
@@ -45,6 +45,7 @@ router.put(
   upload.fields([
     { name: "avatar", maxCount: 1 }
   ]),
+  verifyUploadSignatures(),
   (req, res) => patientController.updateProfile(req, res)
 );
 
@@ -54,6 +55,7 @@ router.put(
   upload.fields([
     { name: "avatar", maxCount: 1 }
   ]),
+  verifyUploadSignatures(),
   (req, res) => patientController.updateProfile(req, res)
 );
 
@@ -64,6 +66,7 @@ router.post(
   "/records",
   protect,
   upload.single("file"),
+  verifyUploadSignatures(),
   (req, res) => medicalRecordController.addRecord(req, res)
 );
 

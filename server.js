@@ -93,13 +93,16 @@ if (process.env.NODE_ENV === "development") {
   });
 }
 
+import { secureFileController } from "./src/presentation/controllers/SecureFileController.js";
+
 // Connect to Database
 connectDB().then(() => {
   seedAdmin();
   seedCommissionConfig();
 });
 
-app.use("/uploads", express.static("uploads"));
+// Secure File Access Gatekeeper (Replaces unprotected static serving)
+app.get("/uploads/:filename", (req, res) => secureFileController.getFile(req, res));
 
 // Routes
 app.use("/api/auth", authRoutes); // login for patient and doctor in single because shared collection shared doctors,patients

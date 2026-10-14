@@ -978,7 +978,15 @@ export const disputeAppointment = async (req, res) => {
         appointment.status = 'disputed';
         appointment.disputeReason = req.body.reason || 'Doctor did not show up at clinic / clinic was closed.';
         if (req.body.proofUrl) {
-            appointment.disputeProofUrl = req.body.proofUrl;
+            const rawProof = String(req.body.proofUrl).trim();
+            // Validate that it strictly points to an internal upload path with allowed extension and no traversal
+            if (!/^\/uploads\/[a-zA-Z0-9_\-.]+\.(jpg|jpeg|png|webp|pdf)$/i.test(rawProof) || rawProof.includes("..")) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid proof URL format. Must be a valid uploaded document or image."
+                });
+            }
+            appointment.disputeProofUrl = rawProof;
         }
         appointment.disputedAt = new Date();
         await appointment.save();
@@ -1394,11 +1402,12 @@ export const getClinicalContext = async (req, res) => {
         const currentPrescriptions = currentRecord?.prescriptions ?? appointment.prescriptions ?? [];
         const currentFiles = currentRecord?.consultationFiles ?? appointment.consultationFiles ?? [];
 
-        // Fetch past consultation records & clinical notes for longitudinal context
+        // Fetch past consultation records & clinical notes for longitudinal context with this doctor
         let pastConsultations = [];
         if (appointment.patientId?._id) {
             const pastAppts = await Appointment.find({
                 patientId: appointment.patientId._id,
+                doctorId: appointment.doctorId?._id || appointment.doctorId,
                 _id: { $ne: appointment._id },
                 status: { $in: ['completed', 'scheduled'] },
             })

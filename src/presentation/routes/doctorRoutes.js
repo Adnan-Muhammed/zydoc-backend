@@ -1,7 +1,7 @@
 // src/presentation/routes/doctorRoutes.js
 
 import express from "express";
-import upload from "../middleware/uploadMiddleware.js";
+import upload, { verifyUploadSignatures } from "../middleware/uploadMiddleware.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { MongoUserRepository } from "../../infrastructure/repositories/MongoUserRepository.js";
 import { MongoTransactionRepository } from "../../infrastructure/repositories/MongoTransactionRepository.js";
@@ -54,6 +54,7 @@ router.post(
     { name: "governmentId", maxCount: 1 },
     { name: "qualificationCertificates", maxCount: 20 },
   ]),
+  verifyUploadSignatures(),
   (req, res) => doctorController.updateProfile(req, res)
 );
 
@@ -61,7 +62,7 @@ router.post(
 router.get("/profile", protect, (req, res) => doctorController.getProfile(req, res));
 router.patch("/profile/basic-info", protect, (req, res) => doctorController.updateBasicInfo(req, res));
 router.patch("/profile/consultation", protect, (req, res) => doctorController.updateConsultation(req, res));
-router.put("/profile/qualifications", protect, upload.any(), (req, res) => doctorController.updateQualifications(req, res));
+router.put("/profile/qualifications", protect, upload.any(), verifyUploadSignatures(), (req, res) => doctorController.updateQualifications(req, res));
 router.patch("/profile/preferences", protect, (req, res) => doctorController.updatePreferences(req, res));
 router.patch("/profile/schedule", protect, (req, res) => doctorController.updateSchedule(req, res));
 router.post("/profile/certificates", protect, upload.array("certificates", 10), (req, res) => doctorController.uploadCertificates(req, res));
