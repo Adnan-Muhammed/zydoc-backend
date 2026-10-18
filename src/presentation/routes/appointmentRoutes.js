@@ -51,7 +51,13 @@ router.get("/admin/all", protect, adminOnly, getAllAppointmentsAdmin);
 router.post("/:id/cancel", protect, cancelAppointment);
 
 // Task 3: Patient Dispute of Offline No-Show Appointment
-router.post("/:id/dispute", protect, disputeAppointment);
+router.post(
+  "/:id/dispute",
+  protect,
+  upload.fields([{ name: "file", maxCount: 1 }, { name: "proof", maxCount: 1 }]),
+  verifyUploadSignatures(),
+  disputeAppointment
+);
 
 // Task 3: Admin Refund & Dispute Management Routes (under /api/appointments)
 router.get("/admin/disputed", protect, adminOnly, getDisputedAppointmentsAdmin);

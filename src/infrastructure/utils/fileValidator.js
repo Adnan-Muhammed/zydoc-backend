@@ -70,6 +70,11 @@ export const UPLOAD_POLICIES = {
     maxSizeBytes: 10 * 1024 * 1024, // 10MB
     label: 'Consultation Attachment (PDF, JPEG, PNG, WebP up to 10MB)',
   },
+  DISPUTE_PROOF: {
+    allowedTypes: ['PDF', 'JPEG', 'PNG', 'WEBP'],
+    maxSizeBytes: 10 * 1024 * 1024, // 10MB
+    label: 'Dispute Proof Document (PDF, JPEG, PNG, WebP up to 10MB)',
+  },
 };
 
 /**
@@ -100,6 +105,9 @@ export function validateFileContent(file, policy) {
 
   // 1. File Size Check
   const size = file.size ?? (file.buffer ? file.buffer.length : 0);
+  if (size === 0) {
+    return { valid: false, error: 'File is empty (0 bytes).' };
+  }
   if (size > policy.maxSizeBytes) {
     const maxMb = policy.maxSizeBytes / (1024 * 1024);
     return { valid: false, error: `File size exceeds the allowed limit of ${maxMb}MB.` };
@@ -126,7 +134,7 @@ export function validateFileContent(file, policy) {
 
   // 4. Magic Bytes Inspection (Read buffer from memory or read first 32 bytes from disk)
   let headerBuf;
-  if (file.buffer) {
+  if (file.buffer && Buffer.isBuffer(file.buffer)) {
     headerBuf = file.buffer.subarray(0, 32);
   } else if (file.path && fs.existsSync(file.path)) {
     const fd = fs.openSync(file.path, 'r');
@@ -138,28 +146,31 @@ export function validateFileContent(file, policy) {
     }
   }
 
-  if (headerBuf) {
-    const detectedType = detectFileSignature(headerBuf);
-    if (!detectedType || !policy.allowedTypes.includes(detectedType)) {
-      return {
-        valid: false,
-        error: `File signature mismatch. The file content does not match permitted formats (${policy.allowedTypes.join(', ')}).`,
-      };
-    }
-
-    // Ensure detected magic bytes align with the file extension
-    const sigInfo = FILE_SIGNATURES[detectedType];
-    if (!sigInfo.exts.includes(ext)) {
-      return {
-        valid: false,
-        error: `File extension "${ext}" conflicts with detected content format "${detectedType}".`,
-      };
-    }
-
-    return { valid: true, detectedType };
+  if (!headerBuf || headerBuf.length === 0) {
+    return {
+      valid: false,
+      error: 'Unable to inspect file content: file buffer or accessible path required.',
+    };
   }
 
-  return { valid: true };
+  const detectedType = detectFileSignature(headerBuf);
+  if (!detectedType || !policy.allowedTypes.includes(detectedType)) {
+    return {
+      valid: false,
+      error: `File signature mismatch. The file content does not match permitted formats (${policy.allowedTypes.join(', ')}).`,
+    };
+  }
+
+  // Ensure detected magic bytes align with the file extension
+  const sigInfo = FILE_SIGNATURES[detectedType];
+  if (!sigInfo.exts.includes(ext)) {
+    return {
+      valid: false,
+      error: `File extension "${ext}" conflicts with detected content format "${detectedType}".`,
+    };
+  }
+
+  return { valid: true, detectedType };
 }
 
 /**

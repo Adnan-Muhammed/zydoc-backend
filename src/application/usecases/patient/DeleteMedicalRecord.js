@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import MedicalRecord from "../../../infrastructure/database/models/MedicalRecord.js";
 import { sanitizeFilename } from "../../../infrastructure/utils/fileValidator.js";
+import { s3StorageService } from "../../../infrastructure/services/S3StorageService.js";
 
 export class DeleteMedicalRecord {
   async execute(userId, recordId) {
@@ -13,8 +14,18 @@ export class DeleteMedicalRecord {
       throw new Error("Medical record not found or you don't have permission to delete it");
     }
 
-    // Safely unlink physical file if stored locally in uploads
     if (record.fileUrl) {
+      // Safely delete file from S3 if configured and not purely a local path on disk
+      if (s3StorageService.isConfigured() && (record.fileUrl.startsWith("medical-records/") || (!record.fileUrl.includes("\\") && !fs.existsSync(record.fileUrl)))) {
+        try {
+          const cleanKey = s3StorageService.extractObjectKey(record.fileUrl);
+          await s3StorageService.delete(cleanKey, { bucketType: "private" });
+        } catch (s3Err) {
+          console.error(`[DeleteMedicalRecord] Failed to delete S3 object (${record.fileUrl}):`, s3Err.message);
+        }
+      }
+
+      // Safely unlink physical file if stored locally in uploads
       try {
         const rawFilename = path.basename(record.fileUrl);
         const cleanFilename = sanitizeFilename(rawFilename);

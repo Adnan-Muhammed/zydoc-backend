@@ -33,6 +33,8 @@ import { MongoWalletRepository } from "../../infrastructure/repositories/MongoWa
 import { CreditWalletUseCase } from "../../application/usecases/wallet/CreditWalletUseCase.js";
 import { CancelAppointmentUseCase } from "../../application/usecases/appointment/CancelAppointmentUseCase.js";
 import { ApproveOfflineDisputeUseCase } from "../../application/usecases/admin/ApproveOfflineDisputeUseCase.js";
+import { s3StorageService } from "../../infrastructure/services/S3StorageService.js";
+import { uploadValidatedFileToS3 } from "../middleware/uploadMiddleware.js";
 
 const notificationRepo = new MongoNotificationRepository();
 const createNotificationUseCase = new CreateNotification(notificationRepo, socketService);
@@ -288,6 +290,17 @@ export const endOnlineConsultation = async (req, res) => {
         });
     } catch (error) {
         console.error("End Online Consultation Error:", error);
+        if (error.code === 'MANUAL_END_LOCKED') {
+            return res.status(400).json({
+                success: false,
+                code: error.code,
+                message: error.message,
+                elapsedSeconds: error.elapsedSeconds,
+                remainingSeconds: error.remainingSeconds,
+                manualEndAllowedAt: error.manualEndAllowedAt,
+                serverNow: error.serverNow || new Date(),
+            });
+        }
         res.status(500).json({ success: false, message: "Server error", error: error.message });
     }
 };
@@ -977,10 +990,30 @@ export const disputeAppointment = async (req, res) => {
 
         appointment.status = 'disputed';
         appointment.disputeReason = req.body.reason || 'Doctor did not show up at clinic / clinic was closed.';
-        if (req.body.proofUrl) {
+
+        const file = req.file || req.files?.file?.[0] || req.files?.proof?.[0];
+        let uploadedS3Key = null;
+
+        if (file) {
+            if (s3StorageService.isConfigured()) {
+                const uploadResult = await uploadValidatedFileToS3(file, {
+                    bucketType: "private",
+                    folder: "dispute-proofs",
+                    prefix: "dispute",
+                });
+                appointment.disputeProofUrl = uploadResult.key;
+                uploadedS3Key = uploadResult.key;
+            } else {
+                appointment.disputeProofUrl = file.filename ? `/uploads/${file.filename}` : file.path?.replace(/\\/g, "/");
+            }
+        } else if (req.body.proofUrl) {
             const rawProof = String(req.body.proofUrl).trim();
-            // Validate that it strictly points to an internal upload path with allowed extension and no traversal
-            if (!/^\/uploads\/[a-zA-Z0-9_\-.]+\.(jpg|jpeg|png|webp|pdf)$/i.test(rawProof) || rawProof.includes("..")) {
+            // Validate that it points to a valid upload path, S3 key, or valid http/https URL without path traversal
+            const isValidLocalUpload = /^\/uploads\/[a-zA-Z0-9_\-.]+\.(jpg|jpeg|png|webp|pdf)$/i.test(rawProof);
+            const isValidS3Key = /^(dispute-proofs\/)?[a-zA-Z0-9_\-.]+\.(jpg|jpeg|png|webp|pdf)$/i.test(rawProof);
+            const isValidHttpUrl = /^(https?:\/\/)[^\s$.?#].[^\s]*$/i.test(rawProof);
+
+            if ((!isValidLocalUpload && !isValidS3Key && !isValidHttpUrl) || rawProof.includes("..")) {
                 return res.status(400).json({
                     success: false,
                     message: "Invalid proof URL format. Must be a valid uploaded document or image."
@@ -988,8 +1021,21 @@ export const disputeAppointment = async (req, res) => {
             }
             appointment.disputeProofUrl = rawProof;
         }
+
         appointment.disputedAt = new Date();
-        await appointment.save();
+
+        try {
+            await appointment.save();
+        } catch (saveErr) {
+            if (uploadedS3Key && s3StorageService.isConfigured()) {
+                try {
+                    await s3StorageService.delete(uploadedS3Key, { bucketType: "private" });
+                } catch (delErr) {
+                    console.error(`[disputeAppointment] S3 rollback failed for ${uploadedS3Key}:`, delErr.message);
+                }
+            }
+            throw saveErr;
+        }
 
         // Notify Admin of new dispute
         try {
@@ -1015,7 +1061,12 @@ export const disputeAppointment = async (req, res) => {
         });
     } catch (error) {
         console.error("Dispute Appointment Error:", error);
-        res.status(500).json({ success: false, message: "Server error", error: error.message });
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json({
+            success: false,
+            message: statusCode === 400 ? error.message : "Server error",
+            error: error.message
+        });
     }
 };
 
@@ -1611,6 +1662,19 @@ export const uploadConsultationFile = async (req, res) => {
         const ext = file.originalname.split('.').pop()?.toLowerCase() || 'file';
         const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
 
+        let fileUrl = `/uploads/${file.filename}`;
+        let uploadedS3Key = null;
+
+        if (s3StorageService.isConfigured()) {
+            const uploadResult = await uploadValidatedFileToS3(file, {
+                bucketType: "private",
+                folder: "consultations",
+                prefix: "consult",
+            });
+            fileUrl = uploadResult.key;
+            uploadedS3Key = uploadResult.key;
+        }
+
         const newFileItem = {
             id: `file-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             name: file.originalname,
@@ -1619,36 +1683,48 @@ export const uploadConsultationFile = async (req, res) => {
             category: category || (user.role === 'doctor' ? 'Clinical Document' : 'Patient Record'),
             uploadedBy: user.role === 'doctor' ? 'Doctor' : 'Patient',
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            url: `/uploads/${file.filename}`,
+            url: fileUrl,
         };
 
-        // Dual-write: update Appointment for complete backward compatibility
-        appointment.consultationFiles = appointment.consultationFiles || [];
-        appointment.consultationFiles.push(newFileItem);
-        await appointment.save();
-
-        // Upsert into ConsultationRecord
-        const consultationRecord = await ConsultationRecord.findOneAndUpdate(
-            { appointmentId: appointment._id },
-            {
-                $push: { consultationFiles: newFileItem },
-                $setOnInsert: {
-                    doctorId: appointment.doctorId,
-                    patientId: appointment.patientId,
-                },
-            },
-            { upsert: true, new: true }
-        );
-
-        if (consultationRecord && (!appointment.consultationRecordId || !appointment.consultationRecordId.equals(consultationRecord._id))) {
-            appointment.consultationRecordId = consultationRecord._id;
+        try {
+            // Dual-write: update Appointment for complete backward compatibility
+            appointment.consultationFiles = appointment.consultationFiles || [];
+            appointment.consultationFiles.push(newFileItem);
             await appointment.save();
-        }
 
-        res.status(201).json({ success: true, file: newFileItem });
+            // Upsert into ConsultationRecord
+            const consultationRecord = await ConsultationRecord.findOneAndUpdate(
+                { appointmentId: appointment._id },
+                {
+                    $push: { consultationFiles: newFileItem },
+                    $setOnInsert: {
+                        doctorId: appointment.doctorId,
+                        patientId: appointment.patientId,
+                    },
+                },
+                { upsert: true, new: true }
+            );
+
+            if (consultationRecord && (!appointment.consultationRecordId || !appointment.consultationRecordId.equals(consultationRecord._id))) {
+                appointment.consultationRecordId = consultationRecord._id;
+                await appointment.save();
+            }
+
+            res.status(201).json({ success: true, file: newFileItem });
+        } catch (dbErr) {
+            if (uploadedS3Key && s3StorageService.isConfigured()) {
+                try {
+                    await s3StorageService.delete(uploadedS3Key, { bucketType: "private" });
+                } catch (delErr) {
+                    console.error(`[uploadConsultationFile] S3 rollback failed for ${uploadedS3Key}:`, delErr.message);
+                }
+            }
+            throw dbErr;
+        }
     } catch (error) {
         console.error("Upload Consultation File Error:", error);
         res.status(500).json({ success: false, message: "Server error", error: error.message });
     }
 };
+
 

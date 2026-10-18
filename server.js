@@ -4,7 +4,7 @@ import express from "express";
 // import dotenv from 'dotenv';
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import morgan from "morgan"; 
+import morgan from "morgan";
 import helmet from "helmet";
 import http from "http";
 import { socketService } from "./src/infrastructure/services/SocketService.js";
@@ -103,6 +103,14 @@ connectDB().then(() => {
 
 // Secure File Access Gatekeeper (Replaces unprotected static serving)
 app.get("/uploads/:filename", (req, res) => secureFileController.getFile(req, res));
+app.get("/consultations/:filename", (req, res) => secureFileController.getFile(req, res));
+app.get("/medical-records/:filename", (req, res) => secureFileController.getFile(req, res));
+app.get("/dispute-proofs/:filename", (req, res) => secureFileController.getFile(req, res));
+app.get("/patient-avatars/:filename", (req, res) => secureFileController.getFile(req, res));
+app.get("/medical-certificates/:filename", (req, res) => secureFileController.getFile(req, res));
+app.get("/government-ids/:filename", (req, res) => secureFileController.getFile(req, res));
+app.get("/qualifications/:filename", (req, res) => secureFileController.getFile(req, res));
+
 
 // Routes
 app.use("/api/auth", authRoutes); // login for patient and doctor in single because shared collection shared doctors,patients
@@ -125,7 +133,7 @@ app.use("/api/doctor/", doctorRoutes);   // doctor  profile completions
 
 
 
-   
+
 app.use("/api/patient/", patientRoutes); // patient profile completions
 app.use("/api/patient/wallet", walletRoutes); // patient wallet flow
 app.use("/api/wallet", walletRoutes); // patient wallet alias

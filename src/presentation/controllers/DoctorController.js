@@ -15,6 +15,8 @@ import Appointment from "../../infrastructure/database/models/Appointment.js";
 import SharedUser from "../../infrastructure/database/models/SharedUser.js";
 import Doctor from "../../infrastructure/database/models/DoctorProfile.js";
 import { MongoReviewRepository } from "../../modules/reviews-ratings/repositories/MongoReviewRepository.js";
+import { uploadValidatedFileToS3 } from "../middleware/uploadMiddleware.js";
+import { s3StorageService } from "../../infrastructure/services/S3StorageService.js";
 
 export class DoctorController {
     constructor(updateDoctorProfileUseCase, jwtService, patchDoctorProfileUseCase, uploadDoctorDocuments, getDoctorProfile, updateFcmToken, getDoctorEarningsUseCase, updateBankDetailsUseCase) {
@@ -40,6 +42,21 @@ export class DoctorController {
                 profileData = JSON.parse(req.body.data);
             } catch (e) {
                 return res.status(400).json({ success: false, message: "Invalid profile data format" });
+            }
+
+            const avatarFile = req.files?.avatar?.[0];
+            const avatarUrl = profileData.avatarUrl || req.body?.avatarUrl;
+
+            if (!avatarFile && !avatarUrl) {
+                const user = await this.updateDoctorProfileUseCase.userRepository?.findById(userId);
+                const hasExistingAvatar = Boolean(user?.doctorProfile?.avatarUrl || user?.avatarUrl);
+                if (!hasExistingAvatar) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Profile picture is mandatory",
+                        field: "avatar",
+                    });
+                }
             }
 
             const updatedDoctor = await this.updateDoctorProfileUseCase.execute(
@@ -93,7 +110,7 @@ export class DoctorController {
                 return res.status(401).json({ success: false, message: "Unauthorized" });
             }
 
-            const partialData = buildDataFn(req);
+            const partialData = await buildDataFn(req);
             const updatedDoctor = await this.patchDoctorProfileUseCase.execute(userId, partialData, req.files);
 
             res.status(200).json({
@@ -144,7 +161,7 @@ export class DoctorController {
     }
 
     async updateQualifications(req, res) {
-        return this._handlePatch(req, res, (req) => {
+        return this._handlePatch(req, res, async (req) => {
             let qualifications = [];
             try {
                 qualifications = typeof req.body.data === 'string' ? JSON.parse(req.body.data) : (req.body.qualifications || []);
@@ -159,7 +176,16 @@ export class DoctorController {
             for (let q of qualifications) {
                 const file = files.find(f => f.fieldname === `certificate_${q.id}`);
                 if (file) {
-                    q.certificateUrl = `/uploads/${file.filename}`;
+                    if (s3StorageService.isConfigured()) {
+                        const uploadResult = await uploadValidatedFileToS3(file, {
+                            bucketType: "private",
+                            prefix: "qual",
+                            folder: "qualifications",
+                        });
+                        q.certificateUrl = uploadResult.key;
+                    } else {
+                        q.certificateUrl = `/uploads/${file.filename}`;
+                    }
                     q.certificateStatus = 'pending';
                 }
             }
@@ -484,21 +510,49 @@ export class DoctorController {
     }
 
     _isClientError(error) {
+        if (!error) return false;
+        if (error.statusCode === 400 || error.isClientError) return true;
         const clientErrors = [
             "User not found",
             "User is not a doctor",
             "The phone number you provided is already linked to another doctor profile.",
             "The medical license number you entered is already registered in our system.",
+            "Profile picture is mandatory",
+            "Profile picture is mandatory.",
+            "Medical Council Registration Certificate is required.",
+            "Government ID is required.",
+            "All qualifications must include a certificate file.",
+            "You must enable at least one consultation type (Telehealth or In-Person).",
+            "Telehealth fee is required.",
+            "At least one available day is required for Telehealth.",
+            "In-Person fee is required.",
+            "Clinic Title and Address are required for In-Person visits.",
+            "At least one available day is required for In-Person consultation.",
         ];
-        return clientErrors.includes(error.message);
+        if (clientErrors.includes(error.message)) return true;
+        if (typeof error.message === "string") {
+            const lower = error.message.toLowerCase();
+            return lower.includes("mandatory") || lower.includes("required") || lower.includes("must include");
+        }
+        return false;
     }
 
     _getErrorField(error) {
+        if (!error) return null;
         const fieldMap = {
             "The phone number you provided is already linked to another doctor profile.": "phone",
             "The medical license number you entered is already registered in our system.": "licenseNumber",
+            "Profile picture is mandatory": "avatar",
+            "Profile picture is mandatory.": "avatar",
         };
-        return fieldMap[error.message] || null;
+        if (fieldMap[error.message]) return fieldMap[error.message];
+        if (typeof error.message === "string") {
+            const lower = error.message.toLowerCase();
+            if (lower.includes("avatar") || lower.includes("profile picture")) return "avatar";
+            if (lower.includes("phone")) return "phone";
+            if (lower.includes("license")) return "licenseNumber";
+        }
+        return null;
     }
 
     _mapUserResponse(user) {

@@ -1,6 +1,8 @@
 // src/application/usecases/doctor/UpdateDoctorProfile.js
 import { validateWorkingHours } from "../../../infrastructure/utils/scheduleValidator.js";
 import { deduceSystemOfMedicine } from "../../../infrastructure/utils/systemOfMedicineHelper.js";
+import { s3StorageService } from "../../../infrastructure/services/S3StorageService.js";
+import { uploadValidatedFileToS3 } from "../../../presentation/middleware/uploadMiddleware.js";
 
 export class UpdateDoctorProfile {
   constructor(userRepository) {
@@ -131,9 +133,21 @@ export class UpdateDoctorProfile {
 
       languages: profileData.languages || [],
 
-      qualifications: (profileData.qualifications || []).map(q => {
+      qualifications: await Promise.all((profileData.qualifications || []).map(async (q) => {
         const certFile = qualificationCertificates.find(f => f.originalname.startsWith(`${q.id}___`));
-        const finalUrl = certFile ? certFile.path.replace(/\\/g, "/") : q.certificateUrl || "";
+        let finalUrl = q.certificateUrl || "";
+        if (certFile) {
+          if (s3StorageService.isConfigured()) {
+            const uploadResult = await uploadValidatedFileToS3(certFile, {
+              bucketType: "private",
+              prefix: "qual",
+              folder: "qualifications",
+            });
+            finalUrl = uploadResult.key;
+          } else {
+            finalUrl = certFile.path ? certFile.path.replace(/\\/g, "/") : "";
+          }
+        }
         
         if (!finalUrl) {
             throw new Error("All qualifications must include a certificate file.");
@@ -146,7 +160,7 @@ export class UpdateDoctorProfile {
           certificateStatus: "pending",
           rejectionReason: "",
         };
-      }),
+      })),
 
       // Consultation
       consultationSettings: standardizedConsultationSettings,
@@ -169,23 +183,58 @@ export class UpdateDoctorProfile {
     // Attach uploaded file paths
     // ─────────────────────────────────────
 
-    if (avatar) {
-      updateData.avatarUrl = avatar.path.replace(/\\/g, "/"); // Normalize windows paths
-    }
-
     const existingProfile = user.doctorProfile || {};
 
+    if (avatar) {
+      const normalizedAvatarPath = avatar.path ? avatar.path.replace(/\\/g, "/") : "";
+      if (s3StorageService.isConfigured()) {
+        const uploadResult = await uploadValidatedFileToS3(avatar, {
+          bucketType: "public",
+          prefix: "avatar",
+          folder: "avatars",
+        });
+        updateData.avatarUrl = uploadResult.url || uploadResult.key;
+      } else {
+        updateData.avatarUrl = normalizedAvatarPath;
+      }
+    } else if (profileData.avatarUrl) {
+      updateData.avatarUrl = profileData.avatarUrl;
+    } else if (existingProfile.avatarUrl) {
+      updateData.avatarUrl = existingProfile.avatarUrl;
+    } else if (user.avatarUrl) {
+      updateData.avatarUrl = user.avatarUrl;
+    } else {
+      const err = new Error("Profile picture is mandatory");
+      err.statusCode = 400;
+      throw err;
+    }
+
     if (medicalCertificate) {
-      updateData.medicalCertificateUrl = medicalCertificate.path.replace(
-        /\\/g,
-        "/",
-      );
+      if (s3StorageService.isConfigured()) {
+        const uploadResult = await uploadValidatedFileToS3(medicalCertificate, {
+          bucketType: "private",
+          prefix: "medcert",
+          folder: "medical-certificates",
+        });
+        updateData.medicalCertificateUrl = uploadResult.key;
+      } else {
+        updateData.medicalCertificateUrl = medicalCertificate.path ? medicalCertificate.path.replace(/\\/g, "/") : "";
+      }
     } else if (!existingProfile.medicalCertificateUrl) {
       throw new Error("Medical Council Registration Certificate is required.");
     }
 
     if (governmentId) {
-      updateData.governmentIdUrl = governmentId.path.replace(/\\/g, "/");
+      if (s3StorageService.isConfigured()) {
+        const uploadResult = await uploadValidatedFileToS3(governmentId, {
+          bucketType: "private",
+          prefix: "govid",
+          folder: "government-ids",
+        });
+        updateData.governmentIdUrl = uploadResult.key;
+      } else {
+        updateData.governmentIdUrl = governmentId.path ? governmentId.path.replace(/\\/g, "/") : "";
+      }
     } else if (!existingProfile.governmentIdUrl) {
       throw new Error("Government ID is required.");
     }

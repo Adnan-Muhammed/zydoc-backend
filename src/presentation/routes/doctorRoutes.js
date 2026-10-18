@@ -45,6 +45,41 @@ const doctorController = new DoctorController(
   updateBankDetailsUseCase
 );
 
+/**
+ * Validation middleware: strictly verifies that an avatar file or URL is present
+ * during doctor profile completion. Rejects with 400 if missing.
+ */
+export const validateDoctorAvatar = (userRepo) => async (req, res, next) => {
+  try {
+    const avatarFile = req.files?.avatar?.[0];
+    let avatarUrl = req.body?.avatarUrl;
+    if (!avatarUrl && req.body?.data) {
+      try {
+        const parsed = JSON.parse(req.body.data);
+        avatarUrl = parsed?.avatarUrl;
+      } catch (_) {}
+    }
+
+    if (!avatarFile && !avatarUrl) {
+      const userId = req.user?.id;
+      if (userId && userRepo) {
+        const user = await userRepo.findById(userId);
+        if (user?.doctorProfile?.avatarUrl || user?.avatarUrl) {
+          return next();
+        }
+      }
+      return res.status(400).json({
+        success: false,
+        message: "Profile picture is mandatory",
+        field: "avatar",
+      });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
 router.post(
   "/profile-update",
   protect,
@@ -55,6 +90,7 @@ router.post(
     { name: "qualificationCertificates", maxCount: 20 },
   ]),
   verifyUploadSignatures(),
+  validateDoctorAvatar(userRepository),
   (req, res) => doctorController.updateProfile(req, res)
 );
 

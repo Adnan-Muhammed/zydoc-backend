@@ -24,8 +24,9 @@ const isDocker = fs.existsSync('/.dockerenv');
 
 let mongoUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/zydoc-app";
 
-// If running in Docker, automatically map localhost/127.0.0.1 to host.docker.internal
-if (isDocker) {
+// If running in Docker and using a local host URI, map localhost/127.0.0.1 to host.docker.internal
+// Atlas cloud URIs (mongodb+srv://) are preserved untouched
+if (isDocker && !mongoUri.startsWith('mongodb+srv://')) {
     mongoUri = mongoUri.replace('127.0.0.1', 'host.docker.internal')
                        .replace('localhost', 'host.docker.internal');
 }

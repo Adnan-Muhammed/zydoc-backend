@@ -8,6 +8,7 @@ import Doctor from "../database/models/DoctorProfile.js";
 import Patient from "../database/models/PatientProfile.js";
 import Admin from "../database/models/AdminProfile.js";
 import Appointment from "../database/models/Appointment.js";
+import { s3StorageService } from "../services/S3StorageService.js";
 
 export class MongoUserRepository extends UserRepository {
   _getModel(role) {
@@ -1104,6 +1105,18 @@ export class MongoUserRepository extends UserRepository {
         q.certificateStatus = "approved";
         q.rejectionReason = "";
       });
+    }
+
+    // Promote avatar to public S3 bucket upon approval if S3 is configured
+    if (doctorProfile.avatarUrl && s3StorageService.isConfigured()) {
+      try {
+        const publicUrl = await s3StorageService.promoteAvatarToPublic(doctorProfile.avatarUrl);
+        if (publicUrl) {
+          doctorProfile.avatarUrl = publicUrl;
+        }
+      } catch (avatarErr) {
+        console.error("[MongoUserRepository.approveDoctor] Failed to promote avatar to public S3:", avatarErr?.message);
+      }
     }
 
     await doctorProfile.save();

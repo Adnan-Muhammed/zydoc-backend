@@ -1,4 +1,6 @@
 // src/application/usecases/patient/UpdatePatientProfile.js
+import { uploadValidatedFileToS3 } from "../../../presentation/middleware/uploadMiddleware.js";
+import { s3StorageService } from "../../../infrastructure/services/S3StorageService.js";
 
 export class UpdatePatientProfile {
   constructor(userRepository) {
@@ -48,7 +50,16 @@ export class UpdatePatientProfile {
     };
 
     if (avatar) {
-      updateData.avatarUrl = avatar.path.replace(/\\/g, "/");
+      if (s3StorageService.isConfigured()) {
+        const uploadResult = await uploadValidatedFileToS3(avatar, {
+          bucketType: "public",
+          prefix: "avatar",
+          folder: "avatars",
+        });
+        updateData.avatarUrl = uploadResult.url || uploadResult.key;
+      } else {
+        updateData.avatarUrl = avatar.path ? avatar.path.replace(/\\/g, "/") : "";
+      }
     }
 
     const updatedPatient = await this.userRepository.updatePatientProfile(
