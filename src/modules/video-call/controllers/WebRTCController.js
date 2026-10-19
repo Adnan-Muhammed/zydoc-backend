@@ -14,6 +14,10 @@ let isEvaluatorRunning = false;
 // Map to track temporary participant disconnects: key: `${roomId}_${userId}` -> { timeoutId, disconnectedAt }
 const disconnectionGraceTimers = new Map();
 
+// Map to track active in-session consultation data per roomId:
+// key: `${roomId}` -> { messages: [], prescriptions: [], files: [] }
+export const consultationSessionData = new Map();
+
 export class WebRTCController { 
   static handle(socket, io) {
     if (!isEvaluatorRunning) {
@@ -33,6 +37,68 @@ export class WebRTCController {
     const extendRoom = new ExtendRoomUseCase(gateway, appointmentRepository);
     const joinWaitingRoom = new JoinWaitingRoomUseCase(gateway, appointmentRepository);
 
+    const getOrCreateConsultationSession = async (roomId, appointmentId) => {
+      if (!consultationSessionData.has(roomId)) {
+        consultationSessionData.set(roomId, {
+          messages: [],
+          prescriptions: [],
+          files: [],
+        });
+      }
+      const session = consultationSessionData.get(roomId);
+
+      // Seed from database if in-memory prescriptions or files are empty
+      if (session.prescriptions.length === 0 || session.files.length === 0) {
+        try {
+          const cleanId = appointmentId || roomId.replace('video_', '');
+          if (cleanId) {
+            const appointment = await appointmentRepository.findById(cleanId);
+            if (appointment) {
+              if (session.prescriptions.length === 0 && Array.isArray(appointment.prescriptions) && appointment.prescriptions.length > 0) {
+                session.prescriptions = appointment.prescriptions;
+              }
+              if (session.files.length === 0 && Array.isArray(appointment.consultationFiles) && appointment.consultationFiles.length > 0) {
+                session.files = appointment.consultationFiles;
+              }
+
+              // Check ConsultationRecord if still empty
+              if (session.prescriptions.length === 0 || session.files.length === 0) {
+                const mongoose = (await import('mongoose')).default || (await import('mongoose'));
+                const ConsultationRecord = mongoose.models.ConsultationRecord || mongoose.model('ConsultationRecord');
+                const cr = await ConsultationRecord.findOne({ appointmentId: cleanId }).lean();
+                if (cr) {
+                  if (session.prescriptions.length === 0 && Array.isArray(cr.prescriptions) && cr.prescriptions.length > 0) {
+                    session.prescriptions = cr.prescriptions;
+                  }
+                  if (session.files.length === 0 && Array.isArray(cr.consultationFiles) && cr.consultationFiles.length > 0) {
+                    session.files = cr.consultationFiles;
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[WebRTCController] Error seeding consultation session from DB:", err);
+        }
+      }
+
+      return session;
+    };
+
+    const sendConsultationSync = async (roomId, appointmentId) => {
+      try {
+        const session = await getOrCreateConsultationSession(roomId, appointmentId);
+        socket.emit("consultation-session-sync", {
+          appointmentId: appointmentId || roomId.replace('video_', ''),
+          messages: session.messages || [],
+          prescriptions: session.prescriptions || [],
+          files: session.files || [],
+        });
+      } catch (err) {
+        console.warn("[WebRTCController] Error sending consultation sync:", err);
+      }
+    };
+
     socket.on("register", () => {
       // Cryptographically verified identity is established exclusively via handshake JWT.
       // Client-supplied payload is safely ignored to prevent role/identity spoofing.
@@ -41,7 +107,7 @@ export class WebRTCController {
       }
     });
 
-    socket.on("join_room", ({ appointmentId }) => {
+    socket.on("join_room", async ({ appointmentId }) => {
       const roomId = appointmentId ? `video_${appointmentId}` : socket.currentVideoRoom;
       const userKey = `${roomId}_${socket.userId}`;
 
@@ -51,14 +117,37 @@ export class WebRTCController {
         const item = disconnectionGraceTimers.get(userKey);
         clearTimeout(item.timeoutId);
         disconnectionGraceTimers.delete(userKey);
+      }
 
+      // Also clean up any lingering timers for this room/user key
+      for (const [key, item] of disconnectionGraceTimers.entries()) {
+        if (key === userKey || (roomId && key.startsWith(`${roomId}_`) && (key.endsWith(`_${socket.userId}`) || !socket.userId))) {
+          clearTimeout(item.timeoutId);
+          disconnectionGraceTimers.delete(key);
+        }
+      }
+
+      await joinRoom.execute(appointmentId, socket.userId, socket.userRole);
+
+      // Rule 6: Immediately broadcast peer_reconnected to all participants in the room
+      if (roomId) {
         io.to(roomId).emit("peer_reconnected", {
           userId: socket.userId,
           userRole: socket.userRole,
         });
       }
 
-      joinRoom.execute(appointmentId, socket.userId, socket.userRole);
+      // Ensure reconnecting participant receives all in-session consultation data
+      if (roomId) {
+        await sendConsultationSync(roomId, appointmentId);
+      }
+    });
+
+    socket.on("request_consultation_sync", async ({ appointmentId }) => {
+      const roomId = appointmentId ? `video_${appointmentId}` : socket.currentVideoRoom;
+      if (roomId) {
+        await sendConsultationSync(roomId, appointmentId);
+      }
     });
 
     socket.on("webrtc_offer", ({ appointmentId, offer }) => {
@@ -75,6 +164,10 @@ export class WebRTCController {
 
     socket.on("end_call", async ({ appointmentId } = {}, callback) => {
       console.log(`[WebRTCController] Received end_call for appointment: ${appointmentId} from user ${socket.userId} (${socket.userRole})`);
+      const roomId = appointmentId ? `video_${appointmentId}` : socket.currentVideoRoom;
+      if (roomId) {
+        consultationSessionData.delete(roomId);
+      }
       try {
         await endRoom.execute(appointmentId, socket.userId, socket.userRole);
         if (typeof callback === "function") callback({ success: true });
@@ -124,24 +217,46 @@ export class WebRTCController {
       leaveRoom.execute(roomId, socket.userRole, socket.userId, socket.id);
     });
 
-    // ── Consultation Hub Real-time Sync ─────────────────────────────────────
-    socket.on("consultation-chat-message", (payload) => {
+    // ── Consultation Hub Real-time Sync & In-Session Data Preservation ────────
+    socket.on("consultation-chat-message", async (payload) => {
       const roomId = payload?.appointmentId ? `video_${payload.appointmentId}` : socket.currentVideoRoom;
-      if (roomId) {
+      if (roomId && payload) {
+        const session = await getOrCreateConsultationSession(roomId, payload.appointmentId);
+        if (payload.id) {
+          const exists = session.messages.some((m) => m.id === payload.id);
+          if (!exists) {
+            session.messages.push(payload);
+          }
+        } else {
+          session.messages.push(payload);
+        }
         socket.to(roomId).emit("consultation-chat-message", payload);
       }
     });
 
-    socket.on("consultation-rx-updated", (payload) => {
+    socket.on("consultation-rx-updated", async (payload) => {
       const roomId = payload?.appointmentId ? `video_${payload.appointmentId}` : socket.currentVideoRoom;
-      if (roomId) {
+      if (roomId && payload) {
+        const session = await getOrCreateConsultationSession(roomId, payload.appointmentId);
+        if (Array.isArray(payload.prescriptions)) {
+          session.prescriptions = payload.prescriptions;
+        }
         socket.to(roomId).emit("consultation-rx-updated", payload);
       }
     });
 
-    socket.on("consultation-file-uploaded", (payload) => {
+    socket.on("consultation-file-uploaded", async (payload) => {
       const roomId = payload?.appointmentId ? `video_${payload.appointmentId}` : socket.currentVideoRoom;
-      if (roomId) {
+      if (roomId && payload) {
+        const session = await getOrCreateConsultationSession(roomId, payload.appointmentId);
+        if (payload.file) {
+          const exists = session.files.some(
+            (f) => (f.id && f.id === payload.file.id) || (f.url && f.url === payload.file.url)
+          );
+          if (!exists) {
+            session.files.unshift(payload.file);
+          }
+        }
         socket.to(roomId).emit("consultation-file-uploaded", payload);
       }
     });
@@ -225,6 +340,7 @@ export class WebRTCController {
                });
                clearRoomTimers(roomId);
                roomState.delete(roomId);
+               consultationSessionData.delete(roomId);
                
                // Update DB
                try {

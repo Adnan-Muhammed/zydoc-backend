@@ -382,7 +382,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                 }
             }
 
-            let has3MinContinuous = false;
+            let totalOverlapSeconds = 0;
             const doctorLogs = app.doctorAttendanceLogs || [];
             const patientLogs = app.patientAttendanceLogs || [];
             const checkNow = new Date().getTime();
@@ -401,15 +401,12 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                     const overlapEnd = Math.min(dLeave, pLeave);
 
                     if (overlapEnd > overlapStart) {
-                        const overlapSeconds = (overlapEnd - overlapStart) / 1000;
-                        if (overlapSeconds >= MIN_CONSULTATION_DURATION_SECONDS) {
-                            has3MinContinuous = true;
-                            break;
-                        }
+                        totalOverlapSeconds += (overlapEnd - overlapStart) / 1000;
                     }
                 }
-                if (has3MinContinuous) break;
             }
+
+            const has3MinContinuous = totalOverlapSeconds >= MIN_CONSULTATION_DURATION_SECONDS;
 
             // 1. SUCCESSFUL CONSULTATION:
             // If doctor and patient met the 3-minute continuous consultation requirement, mark as completed.

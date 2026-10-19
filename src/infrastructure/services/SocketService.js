@@ -70,11 +70,39 @@ class SocketService {
       if (socket.userRole === "admin") {
         socket.join("admin_room");
       }
+
+      // Also register doctor profileId so doctor can be reached by profileId
+      if (socket.userRole === "doctor") {
+        import("mongoose").then(async (mongooseModule) => {
+          try {
+            const mongoose = mongooseModule.default || mongooseModule;
+            const SharedUser = mongoose.model("SharedUser");
+            const userDoc = await SharedUser.findById(socket.userId).select("profileId");
+            if (userDoc?.profileId) {
+              const profileStr = userDoc.profileId.toString();
+              if (!this.users.has(profileStr)) {
+                this.users.set(profileStr, new Set());
+              }
+              this.users.get(profileStr).add(socket.id);
+              socket.join(profileStr);
+            }
+          } catch (err) {
+            console.error("[SocketService] Error registering doctor profileId:", err);
+          }
+        });
+      }
     }
 
-    // Backward compatibility: ignore client role to prevent privilege escalation
+    // Register profileId emitted by client (e.g. Topbar.tsx registering with doctor profileId)
     socket.on("register", (data) => {
-      // Safe no-op: verified identity from JWT is already registered
+      if (data?.userId && socket.userId) {
+        const customId = data.userId.toString();
+        if (!this.users.has(customId)) {
+          this.users.set(customId, new Set());
+        }
+        this.users.get(customId).add(socket.id);
+        socket.join(customId);
+      }
     });
 
     // WebRTC Signaling Events
@@ -90,7 +118,6 @@ class SocketService {
           if (sockets.size === 0) {
             this.users.delete(userId);
           }
-          break;
         }
       }
     });

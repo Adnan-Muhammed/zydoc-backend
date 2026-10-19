@@ -23,6 +23,7 @@ import {
   saveClinicalNotes,
   savePrescriptions,
   uploadConsultationFile,
+  getJoinToken,
 } from "../controllers/AppointmentController.js";
 import upload, { verifyUploadSignatures } from "../middleware/uploadMiddleware.js";
 import { createRazorpayOrder, verifyPayment } from "../controllers/PaymentController.js";
@@ -72,6 +73,9 @@ router.get("/:id/clinical-context", protect, getClinicalContext);
 router.post("/:id/clinical-notes", protect, preventSuspendedDoctorAction, saveClinicalNotes);
 router.post("/:id/prescriptions", protect, preventSuspendedDoctorAction, savePrescriptions);
 router.post("/:id/consultation-files", protect, upload.single("file"), verifyUploadSignatures(), preventSuspendedDoctorAction, uploadConsultationFile);
+
+// Video Consultation Hub Join Token Route
+router.post("/:id/join-token", protect, getJoinToken);
 
 router.get("/:id", protect, getAppointmentById);
 

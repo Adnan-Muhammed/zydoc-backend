@@ -6,6 +6,10 @@ class MongoNotificationRepository {
     return await notification.save();
   }
 
+  async findOne(query) {
+    return await Notification.findOne(query);
+  }
+
   async getByUserId(userId) {
     return await Notification.find({ recipientId: userId }).sort({ createdAt: -1 });
   }

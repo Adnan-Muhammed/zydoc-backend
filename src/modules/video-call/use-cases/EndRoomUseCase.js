@@ -117,8 +117,8 @@ export class EndRoomUseCase {
       return false;
     });
 
-    // Check continuous overlap between doctor and patient logs
-    let has3MinContinuous = false;
+    // Check total continuous overlap between doctor and patient logs across rejoining sessions
+    let totalOverlapSeconds = 0;
     const doctorLogs = appointment.doctorAttendanceLogs || [];
     const patientLogs = appointment.patientAttendanceLogs || [];
 
@@ -136,15 +136,12 @@ export class EndRoomUseCase {
         const overlapEnd = Math.min(dLeave, pLeave);
 
         if (overlapEnd > overlapStart) {
-          const overlapSeconds = (overlapEnd - overlapStart) / 1000;
-          if (overlapSeconds >= MIN_CONSULTATION_DURATION_SECONDS) {
-            has3MinContinuous = true;
-            break;
-          }
+          totalOverlapSeconds += (overlapEnd - overlapStart) / 1000;
         }
       }
-      if (has3MinContinuous) break;
     }
+
+    const has3MinContinuous = totalOverlapSeconds >= MIN_CONSULTATION_DURATION_SECONDS;
 
     const hasConsultationStarted = Boolean(
       appointment.hasOverlapped ||
@@ -159,7 +156,13 @@ export class EndRoomUseCase {
     if ((hasConsultationStarted || hasValidPatientWait) && !has3MinContinuous && !isSystemForce) {
       if (pOpenLog) { pOpenLog.leftAt = undefined; pOpenLog.durationSeconds = undefined; }
       if (dOpenLog) { dOpenLog.leftAt = undefined; dOpenLog.durationSeconds = undefined; }
-      throw new Error("Minimum 3 continuous minutes of consultation is required before ending this session. If disconnected, participants must rejoin to complete the consultation.");
+      const remainingSeconds = Math.max(0, Math.ceil(MIN_CONSULTATION_DURATION_SECONDS - totalOverlapSeconds));
+      const err = new Error(`Minimum 3 continuous minutes of consultation is required before ending this session (${remainingSeconds}s remaining). If disconnected, participants must rejoin to complete the consultation.`);
+      err.code = 'MANUAL_END_LOCKED';
+      err.elapsedSeconds = Math.round(totalOverlapSeconds);
+      err.remainingSeconds = remainingSeconds;
+      err.serverNow = now;
+      throw err;
     }
 
     // ── 2. SCENARIO A: PATIENT NO-SHOW / ORPHANED APPOINTMENT MANUAL CLOSURE ──

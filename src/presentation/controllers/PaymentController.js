@@ -58,6 +58,24 @@ export const createRazorpayOrder = async (req, res) => {
 
     // If fully covered and paid by patient wallet
     if (orderDetails.status === 'COMPLETED_VIA_WALLET') {
+      try {
+        const appointment = await appointmentRepo.findById(orderDetails.appointmentId);
+        if (appointment) {
+          const visitTypeStr = appointment.patientType === 'NEW' ? 'New Consultation' : appointment.patientType === 'FOLLOW_UP' ? 'Follow-up Appointment' : 'Appointment';
+          // Notify doctor of new confirmed booking
+          await createNotificationUseCase.execute({
+            recipientId: appointment.doctorId,
+            recipientModel: 'Doctor',
+            type: 'BOOKING',
+            title: `${visitTypeStr} Booked`,
+            message: `A patient has booked a ${visitTypeStr.toLowerCase()} with you.`,
+            referenceId: appointment._id
+          });
+        }
+      } catch (notifErr) {
+        console.error('[PaymentController] Error sending doctor booking notification for wallet booking:', notifErr);
+      }
+
       return res.status(200).json({
         success: true,
         status: 'COMPLETED_VIA_WALLET',
@@ -96,7 +114,7 @@ export const verifyPayment = async (req, res) => {
       razorpay_signature
     );
 
-    if (verificationResult.success) {
+    if (verificationResult.success && !verificationResult.isDuplicate) {
       const appointment = verificationResult.appointment;
       
       const visitTypeStr = appointment.patientType === 'NEW' ? 'New Consultation' : appointment.patientType === 'FOLLOW_UP' ? 'Follow-up Appointment' : 'Appointment';

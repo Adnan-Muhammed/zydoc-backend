@@ -103,7 +103,7 @@ export class LeaveRoomUseCase {
                 return (overlapEnd > overlapStart) && ((overlapEnd - overlapStart) / 1000 >= 60);
               });
 
-              let has3MinContinuous = false;
+              let totalOverlapSeconds = 0;
               const doctorLogs = appointment.doctorAttendanceLogs || [];
               const patientLogs = appointment.patientAttendanceLogs || [];
 
@@ -121,15 +121,12 @@ export class LeaveRoomUseCase {
                   const overlapEnd = Math.min(dLeave, pLeave);
 
                   if (overlapEnd > overlapStart) {
-                    const overlapSeconds = (overlapEnd - overlapStart) / 1000;
-                    if (overlapSeconds >= MIN_CONSULTATION_DURATION_SECONDS) {
-                      has3MinContinuous = true;
-                      break;
-                    }
+                    totalOverlapSeconds += (overlapEnd - overlapStart) / 1000;
                   }
                 }
-                if (has3MinContinuous) break;
               }
+
+              const has3MinContinuous = totalOverlapSeconds >= MIN_CONSULTATION_DURATION_SECONDS;
 
               const slotDurationMins = (appointment.scheduledStartAt && appointment.scheduledEndAt)
                 ? Math.round((new Date(appointment.scheduledEndAt) - new Date(appointment.scheduledStartAt)) / 60000)

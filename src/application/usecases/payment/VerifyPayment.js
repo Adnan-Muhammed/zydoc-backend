@@ -42,7 +42,7 @@ export class VerifyPayment {
         `[VerifyPayment] Idempotency hit: appointment ${appointment._id} is already ` +
         `${appointment.status}/${appointment.paymentStatus}. Returning cached success.`
       );
-      return { success: true, appointment };
+      return { success: true, appointment, isDuplicate: true };
     }
     // ───────────────────────────────────────────────────────────────────────────
 
@@ -258,7 +258,7 @@ export class VerifyPayment {
       console.log("[VerifyPayment] socketService or emitNewBookingNotification method is NOT available on this instance.");
     }
 
-    return { success: true, appointment };
+    return { success: true, appointment, isDuplicate: false };
   }
 }
 

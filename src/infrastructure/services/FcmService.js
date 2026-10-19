@@ -70,7 +70,7 @@ class FcmService {
           requireInteraction: false,
         },
         fcmOptions: {
-          link: "/", // URL to open when notification is clicked
+          link: stringifiedData.link || "/", // URL to open when notification is clicked
         },
       },
     };

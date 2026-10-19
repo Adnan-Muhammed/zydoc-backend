@@ -35,6 +35,10 @@ import { CancelAppointmentUseCase } from "../../application/usecases/appointment
 import { ApproveOfflineDisputeUseCase } from "../../application/usecases/admin/ApproveOfflineDisputeUseCase.js";
 import { s3StorageService } from "../../infrastructure/services/S3StorageService.js";
 import { uploadValidatedFileToS3 } from "../middleware/uploadMiddleware.js";
+import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import { EARLY_JOIN_MINUTES, EARLY_START_MINUTES } from "../../config/videoCallConfig.js";
+import { consultationSessionData } from "../../modules/video-call/controllers/WebRTCController.js";
 
 const notificationRepo = new MongoNotificationRepository();
 const createNotificationUseCase = new CreateNotification(notificationRepo, socketService);
@@ -1371,7 +1375,7 @@ export const getAppointmentById = async (req, res) => {
 
         const appointmentObj = appointment.toObject();
         // Fallback: If clinicalNotes / prescriptions / files are in ConsultationRecord, attach them
-        if (!appointmentObj.clinicalNotes || !appointmentObj.prescriptions?.length) {
+        if (!appointmentObj.clinicalNotes || !appointmentObj.prescriptions?.length || !appointmentObj.consultationFiles?.length) {
             const cr = await ConsultationRecord.findOne({ appointmentId: appointment._id })
                 .select('clinicalNotes prescriptions consultationFiles')
                 .lean();
@@ -1608,6 +1612,12 @@ export const savePrescriptions = async (req, res) => {
             await appointment.save();
         }
 
+        // Keep active in-session consultation session synchronized in memory
+        const sessionRx = consultationSessionData.get(`video_${id}`);
+        if (sessionRx) {
+            sessionRx.prescriptions = appointment.prescriptions;
+        }
+
         res.status(200).json({
             success: true,
             message: "Prescriptions saved successfully",
@@ -1710,6 +1720,15 @@ export const uploadConsultationFile = async (req, res) => {
                 await appointment.save();
             }
 
+            // Keep active in-session consultation session synchronized in memory
+            const sessionFiles = consultationSessionData.get(`video_${id}`);
+            if (sessionFiles) {
+                const exists = sessionFiles.files.some((f) => (f.id && f.id === newFileItem.id) || (f.url && f.url === newFileItem.url));
+                if (!exists) {
+                    sessionFiles.files.unshift(newFileItem);
+                }
+            }
+
             res.status(201).json({ success: true, file: newFileItem });
         } catch (dbErr) {
             if (uploadedS3Key && s3StorageService.isConfigured()) {
@@ -1723,6 +1742,186 @@ export const uploadConsultationFile = async (req, res) => {
         }
     } catch (error) {
         console.error("Upload Consultation File Error:", error);
+        res.status(500).json({ success: false, message: "Server error", error: error.message });
+    }
+};
+
+/**
+ * POST /api/appointments/:id/join-token
+ * Validates participant authorization and room-entry timing rules,
+ * then returns an appointment-specific secure join token.
+ */
+export const getJoinToken = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user?.id || req.user?._id;
+        const userRole = (req.user?.role || "").toLowerCase();
+
+        if (!userId) {
+            return res.status(401).json({ success: false, code: "UNAUTHORIZED", message: "Unauthorized. User ID not found." });
+        }
+
+        const appointment = await Appointment.findById(id);
+        if (!appointment) {
+            return res.status(404).json({ success: false, message: "Appointment not found." });
+        }
+
+        // Ownership / Authorization check: Only assigned patient, assigned doctor, or admin
+        const sharedUser = await SharedUser.findById(userId);
+        const doctorProfileId = sharedUser?.profileId;
+
+        const patientMatches =
+            (appointment.patientId?._id || appointment.patientId)?.toString() === userId.toString() ||
+            (sharedUser?.profileId && (appointment.patientId?._id || appointment.patientId)?.toString() === sharedUser.profileId.toString());
+
+        const doctorMatches =
+            (doctorProfileId && (appointment.doctorId?._id || appointment.doctorId)?.toString() === doctorProfileId.toString()) ||
+            ((appointment.doctorId?._id || appointment.doctorId)?.toString() === userId.toString());
+
+        let isAuthorized = false;
+        let isDoctor = false;
+        let isPatient = false;
+
+        if (userRole === "doctor" && doctorMatches) {
+            isAuthorized = true;
+            isDoctor = true;
+        } else if (userRole === "patient" && patientMatches) {
+            isAuthorized = true;
+            isPatient = true;
+        } else if (doctorMatches) {
+            isAuthorized = true;
+            isDoctor = true;
+        } else if (patientMatches) {
+            isAuthorized = true;
+            isPatient = true;
+        } else if (userRole === "admin") {
+            isAuthorized = true;
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({
+                success: false,
+                code: "NOT_AUTHORIZED",
+                message: "Unauthorized: You are not an assigned participant for this appointment."
+            });
+        }
+
+        // Terminal status check: once consultation is marked terminal, cannot be joined
+        const terminalStatuses = ["completed", "cancelled", "doctor_missed", "patient_missed", "rejected", "no-show"];
+        if (terminalStatuses.includes((appointment.status || "").toLowerCase())) {
+            return res.status(400).json({
+                success: false,
+                code: "SESSION_TERMINAL",
+                message: "This consultation session is terminal and cannot be joined."
+            });
+        }
+
+        // Determine scheduled start timestamp
+        let scheduledStartMs = 0;
+        if (appointment.scheduledStartAt) {
+            scheduledStartMs = new Date(appointment.scheduledStartAt).getTime();
+        } else if (appointment.appointmentDate && appointment.appointmentTime) {
+            const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
+            const scheduledStartDate = new Date(appointment.appointmentDate);
+            let [hours, minutes] = (timeStr || "").split(":").map(Number);
+            if (modifier?.toUpperCase() === "PM" && hours < 12) hours += 12;
+            if (modifier?.toUpperCase() === "AM" && hours === 12) hours = 0;
+            scheduledStartDate.setHours(hours || 0, minutes || 0, 0, 0);
+            scheduledStartMs = scheduledStartDate.getTime();
+        }
+
+        const now = Date.now();
+        const slotDurationMins = (appointment.scheduledStartAt && appointment.scheduledEndAt)
+            ? Math.round((new Date(appointment.scheduledEndAt) - new Date(appointment.scheduledStartAt)) / 60000)
+            : (Number(appointment.doctorId?.slotDuration) || 15);
+
+        const hasConsultationStarted = Boolean(
+            appointment.hasOverlapped ||
+            appointment.sessionStartedAt ||
+            (appointment.doctorJoinedAt && appointment.patientJoinedAt)
+        );
+
+        const baseEndMs = appointment.scheduledEndAt
+            ? new Date(appointment.scheduledEndAt).getTime()
+            : (scheduledStartMs + slotDurationMins * 60000);
+
+        if (scheduledStartMs > 0) {
+            // Rule 1: Patient can enter waiting room from 10 minutes before scheduled time
+            // Rule 2: Doctor can enter from 7 minutes before scheduled time
+            if (isPatient) {
+                const patientEarlyJoinMs = scheduledStartMs - EARLY_JOIN_MINUTES * 60000;
+                if (now < patientEarlyJoinMs) {
+                    return res.status(400).json({
+                        success: false,
+                        code: "JOIN_TOO_EARLY",
+                        earlyJoinAt: new Date(patientEarlyJoinMs).toISOString(),
+                        message: `Consultation room opens at ${new Date(patientEarlyJoinMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                    });
+                }
+            } else if (isDoctor) {
+                const doctorEarlyStartMs = scheduledStartMs - EARLY_START_MINUTES * 60000;
+                if (now < doctorEarlyStartMs) {
+                    return res.status(400).json({
+                        success: false,
+                        code: "JOIN_TOO_EARLY",
+                        earlyJoinAt: new Date(doctorEarlyStartMs).toISOString(),
+                        message: `Consultation room opens at ${new Date(doctorEarlyStartMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                    });
+                }
+            }
+
+            // Rule 4: If consultation has not started by the existing late cutoff, neither participant can enter afterward
+            if (hasConsultationStarted) {
+                if (now >= baseEndMs) {
+                    return res.status(400).json({
+                        success: false,
+                        code: "SESSION_TERMINAL",
+                        message: "The scheduled slot time for this consultation has ended."
+                    });
+                }
+            } else {
+                let lateJoinCutoffMs;
+                if (appointment.lateJoinCutoffAt) {
+                    lateJoinCutoffMs = new Date(appointment.lateJoinCutoffAt).getTime();
+                } else {
+                    const cutoffMins = getLateJoinGraceMinutes(slotDurationMins);
+                    lateJoinCutoffMs = scheduledStartMs + cutoffMins * 60000;
+                }
+
+                if (now >= lateJoinCutoffMs) {
+                    return res.status(400).json({
+                        success: false,
+                        code: "JOIN_WINDOW_CLOSED",
+                        message: "The initial join window for this appointment has closed."
+                    });
+                }
+            }
+        }
+
+        // Issue Join Token
+        const jti = crypto.randomUUID ? crypto.randomUUID() : new mongoose.Types.ObjectId().toString();
+        const payload = {
+            appointmentId: appointment._id.toString(),
+            userId: userId.toString(),
+            role: userRole,
+            jti,
+            type: "join_token"
+        };
+
+        const token = jwt.sign(payload, process.env.JWT_SECRET || "access_secret", {
+            expiresIn: 300 // 5 minutes
+        });
+
+        res.status(200).json({
+            success: true,
+            token,
+            jti,
+            sessionId: `video_${appointment._id}`,
+            serverNow: new Date().toISOString(),
+            expiresInSeconds: 300
+        });
+    } catch (error) {
+        console.error("Get Join Token Error:", error);
         res.status(500).json({ success: false, message: "Server error", error: error.message });
     }
 };
