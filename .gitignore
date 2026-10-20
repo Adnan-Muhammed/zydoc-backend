@@ -105,3 +105,12 @@ Desktop.ini
 planningFolder/
 ZYDOC_BACKEND_AUDIT_REPORT.md
 S3_BACKEND_IMPLEMENTATION_PLAN.md
+appointment-timing-rules.md
+/tests
+clean.js
+database_delete.js
+docslot.js
+slotbook.js
+testStructure.js
+timeparser.js
+timer.js
