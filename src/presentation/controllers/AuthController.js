@@ -68,7 +68,7 @@ export class AuthController {
     }
 
     return response;
-  }
+  }  
 
   // ✅ HELPER: Set Auth Cookies
   _setAuthCookies(res, accessToken, refreshToken) {
@@ -77,19 +77,21 @@ export class AuthController {
       res.cookie("accessToken", accessToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
+        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+        domain: process.env.NODE_ENV === "production" ? ".carehealth.online" : "localhost",
         path: "/",
         maxAge: 15 * 60 * 1000,
       });
-    }
-
+    } 
+ 
     
     // Refresh Token: 7 days
     if (refreshToken) {
       res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
+        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+        domain: process.env.NODE_ENV === "production" ? ".carehealth.online" : "localhost",
         path: "/",
         maxAge: 7 * 24 * 60 * 60 * 1000, 
       });

@@ -38,15 +38,16 @@ export class PatientController {
               id: updatedPatient.id || updatedPatient._id,
               role: updatedPatient.role,
               isProfileCompleted: true,
-          });
-
+          }); 
+ 
 
            //   this line cuurently 2 minutes 
             // but i want to be 15 days
           res.cookie('accessToken', newAccessToken, {
               httpOnly: true,
               secure: process.env.NODE_ENV === 'production',
-              sameSite: 'lax',
+              sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+              domain: process.env.NODE_ENV === 'production' ? '.carehealth.online' : 'localhost',
               path: '/',
               maxAge: 15 * 60 * 1000,
           });

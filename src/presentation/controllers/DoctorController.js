@@ -71,14 +71,15 @@ export class DoctorController {
                 id: mappedUser._id,
                 role: mappedUser.role,
                 isProfileCompleted: true,
-            });
+            });  
 
             //   this line cuurently 2 minutes 
             // but i want to be 15 minutes
             res.cookie('accessToken', newAccessToken, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax',
+                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+                domain: process.env.NODE_ENV === 'production' ? '.carehealth.online' : 'localhost',
                 path: '/',
                 maxAge: 15 * 60 * 1000,
             });

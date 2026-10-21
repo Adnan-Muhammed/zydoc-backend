@@ -70,11 +70,19 @@ app.use(
 //     credentials: true
 // }));
 
+// const corsOptions = {
+//  origin: process.env.CLIENT_URL || "http://localhost:3000",
+//  credentials: true,
+//  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+// };
+
 const corsOptions = {
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
+  origin: ['https://carehealth.online', 'https://www.carehealth.online', 'http://localhost:3000','http://localhost:3000'],
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 };
+
+
 
 // Handle CORS preflight (OPTIONS) and all requests with the same cors() config
 // This ensures consistent Access-Control-* headers on BOTH preflight and actual requests
