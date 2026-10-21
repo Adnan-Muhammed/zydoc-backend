@@ -6,36 +6,12 @@ import {
   UPLOAD_POLICIES,
   FILE_SIGNATURES,
   validateFileContent,
-  generateSecureFilename,
 } from "../../infrastructure/utils/fileValidator.js";
 import { s3StorageService } from "../../infrastructure/services/S3StorageService.js";
 
-// Uploads destination directory for legacy disk storage
-const uploadPath = "uploads/";
-
-if (!fs.existsSync(uploadPath)) {
-  fs.mkdirSync(uploadPath, { recursive: true });
-}
-
-/**
- * Disk storage engine using cryptographically random UUID filenames
- */
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    let prefix = 'file';
-    if (file.fieldname === 'avatar') prefix = 'avatar';
-    else if (file.fieldname === 'medicalCertificate') prefix = 'medcert';
-    else if (file.fieldname === 'governmentId') prefix = 'govid';
-    else if (file.fieldname === 'qualificationCertificates' || file.fieldname.startsWith('certificate_')) prefix = 'qual';
-    else if (file.fieldname === 'file') prefix = 'rec';
-
-    const uniqueName = generateSecureFilename(prefix, file.originalname);
-    cb(null, uniqueName);
-  },
-});
+// This project stores uploaded files in S3. Multer holds the incoming file in
+// memory until the application validates it and sends it to the bucket.
+const memoryStorage = multer.memoryStorage();
 
 /**
  * Filter factory based on use-case upload policy
@@ -95,7 +71,7 @@ const defaultFilter = (req, file, cb) => {
  * Default disk storage upload instance
  */
 const upload = multer({
-  storage,
+  storage: memoryStorage,
   fileFilter: defaultFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB max ceiling
@@ -197,25 +173,25 @@ export function verifyUploadSignatures(policyResolver) {
  * Specific Multer instances for disk storage with fine-grained limits
  */
 export const uploadAvatar = multer({
-  storage,
+  storage: memoryStorage,
   fileFilter: createUploadFilter(UPLOAD_POLICIES.AVATAR),
   limits: { fileSize: UPLOAD_POLICIES.AVATAR.maxSizeBytes, files: 1 },
 });
 
 export const uploadVerificationDoc = multer({
-  storage,
+  storage: memoryStorage,
   fileFilter: createUploadFilter(UPLOAD_POLICIES.VERIFICATION_DOC),
   limits: { fileSize: UPLOAD_POLICIES.VERIFICATION_DOC.maxSizeBytes },
 });
 
 export const uploadMedicalRecord = multer({
-  storage,
+  storage: memoryStorage,
   fileFilter: createUploadFilter(UPLOAD_POLICIES.MEDICAL_RECORD),
   limits: { fileSize: UPLOAD_POLICIES.MEDICAL_RECORD.maxSizeBytes, files: 1 },
 });
 
 export const uploadConsultationAttachment = multer({
-  storage,
+  storage: memoryStorage,
   fileFilter: createUploadFilter(UPLOAD_POLICIES.CONSULTATION_FILE),
   limits: { fileSize: UPLOAD_POLICIES.CONSULTATION_FILE.maxSizeBytes, files: 1 },
 });
@@ -224,8 +200,6 @@ export const uploadConsultationAttachment = multer({
  * Memory storage engine and instances for S3 streaming/buffer uploads.
  * Memory limits prevent unbounded RAM use by rejecting oversized files as they stream in.
  */
-export const memoryStorage = multer.memoryStorage();
-
 export const uploadMemory = multer({
   storage: memoryStorage,
   fileFilter: defaultFilter,

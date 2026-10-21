@@ -24,7 +24,6 @@ export class S3StorageService {
    * @param {string} [options.publicBucket] - S3 public assets bucket name
    * @param {string} [options.privateBucket] - S3 private files bucket name
    * @param {string} [options.cloudfrontDomain] - CloudFront distribution domain for public assets
-   * @param {string} [options.driver] - Storage driver identifier (defaults to 's3')
    */
   constructor({
     s3Client = null,
@@ -33,13 +32,11 @@ export class S3StorageService {
     publicBucket = process.env.S3_PUBLIC_BUCKET || "zydoc-prod-public-assets-482731",
     privateBucket = process.env.S3_PRIVATE_BUCKET || "zydoc-prod-private-files-482731",
     cloudfrontDomain = process.env.AWS_CLOUDFRONT_DOMAIN || "d2j3r11t01prca.cloudfront.net",
-    driver = process.env.FILE_STORAGE_DRIVER || "s3",
   } = {}) {
     this.region = region;
     this.publicBucket = publicBucket;
     this.privateBucket = privateBucket;
     this.cloudfrontDomain = cloudfrontDomain;
-    this.driver = driver;
     this._getSignedUrlFn = getSignedUrlFn || getSignedUrl;
 
     if (s3Client) {
@@ -66,7 +63,6 @@ export class S3StorageService {
    * @returns {boolean}
    */
   isConfigured() {
-    if (this.driver === "local") return false;
     return Boolean(this.publicBucket && this.privateBucket);
   }
 

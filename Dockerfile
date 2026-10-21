@@ -26,7 +26,6 @@ COPY . .
 # ==========================================
 # 6. Create Uploads Directory and Set Permissions
 # ==========================================
-RUN mkdir -p /app/uploads && chown -R node:node /app
 
 # ==========================================
 # 7. Environment Defaults & Security User

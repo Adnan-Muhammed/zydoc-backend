@@ -10,7 +10,7 @@ cron.schedule('* * * * *', async () => {
     try {
         const now = new Date();
         const expiredLocks = await appointmentRepo.findExpiredLocks(now);
-        
+
         for (const appointment of expiredLocks) {
             // Mark as 'expired' instead of deleting.
             // This preserves the razorpayOrderId so VerifyPayment can find
@@ -21,7 +21,7 @@ cron.schedule('* * * * *', async () => {
 
         // Auto-sweep expired online appointments so they never stay orphaned as 'scheduled'
         await appointmentRepo.lazyUpdateNoShows();
-    } catch (error) { 
+    } catch (error) {
         console.error("Error in SlotCron:", error);
     }
 });

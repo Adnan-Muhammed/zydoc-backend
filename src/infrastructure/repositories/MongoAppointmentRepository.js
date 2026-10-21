@@ -35,11 +35,11 @@ export class MongoAppointmentRepository extends AppointmentRepository {
         //   A_start < B_end  AND  A_end > B_start
         // which maps directly to the two $lt / $gt conditions below.
         const doctorTimezone = lockData.doctorTimezone || lockData.timezone || 'Asia/Kolkata';
-        const candidateStartUTC = lockData.scheduledStartAt 
-            ? new Date(lockData.scheduledStartAt) 
+        const candidateStartUTC = lockData.scheduledStartAt
+            ? new Date(lockData.scheduledStartAt)
             : getSlotExactUTC(lockData.appointmentDate, lockData.appointmentTime, doctorTimezone);
-        const candidateEndUTC = lockData.scheduledEndAt 
-            ? new Date(lockData.scheduledEndAt) 
+        const candidateEndUTC = lockData.scheduledEndAt
+            ? new Date(lockData.scheduledEndAt)
             : new Date(candidateStartUTC.getTime() + slotDuration * 60 * 1000);
 
         const existingAppointments = await Appointment.find({
@@ -51,7 +51,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             ],
             // Overlap condition on stored UTC timestamps
             scheduledStartAt: { $lt: candidateEndUTC },
-            scheduledEndAt:   { $gt: candidateStartUTC },
+            scheduledEndAt: { $gt: candidateStartUTC },
         }).lean();
 
         for (const app of existingAppointments) {
@@ -82,7 +82,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                 status: 'locked',
                 lockExpiryTime: { $lte: currentTime },
             },
-            { $set: { status: 'expired' } }
+            { $set: { status: 'expired' }, $unset: { lockedBy: 1, lockExpiryTime: 1 } }
         );
 
         // Single atomic operation: insert a new locked document.
@@ -111,17 +111,13 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     }
 
     async unlockSlot(payload, userId) {
-        // Finding F-03: Patient-initiated explicit unlock is safe to hard-delete
-        // ONLY when the slot has not been associated with an active Razorpay order
-        // and no payment has been captured/completed.
-        // Never delete an appointment that must be preserved for payment verification
-        // or one associated with an active or successfully captured payment.
+        // Preserve the appointment/order record for late payment verification, but
+        // release the temporary slot lock when the patient exits checkout.
         let query = {
             lockedBy: userId,
             status: 'locked',
             paymentStatus: { $ne: 'paid' },
             paymentId: { $in: [null, undefined, ''] },
-            razorpayOrderId: { $in: [null, undefined, ''] },
         };
 
         if (typeof payload === 'string' || payload instanceof mongoose.Types.ObjectId) {
@@ -133,25 +129,36 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             query.appointmentTime = payload.time;
         }
 
-        return await Appointment.findOneAndDelete(query);
+        return await Appointment.findOneAndUpdate(
+            query,
+            { $set: { status: 'expired' }, $unset: { lockedBy: 1, lockExpiryTime: 1 } },
+            { returnDocument: 'after' }
+        );
     }
 
     // Called exclusively by the cron job for TTL-expired locks.
-    // Marks the appointment 'expired' instead of deleting it so that
-    // VerifyPayment can still find the record by razorpayOrderId and
-    // trigger a refund if Razorpay captured money after the TTL elapsed.
+    // Clears temporary lock data while preserving the appointment/order so
+    // VerifyPayment can refund a payment captured after the lock expired.
     async expireLockedSlot(appointmentId) {
         return await Appointment.findOneAndUpdate(
-            { _id: appointmentId, status: 'locked' },
-            { $set: { status: 'expired' } },
+            { _id: appointmentId, status: 'locked', lockExpiryTime: { $lte: new Date() } },
+            { $set: { status: 'expired' }, $unset: { lockedBy: 1, lockExpiryTime: 1 } },
             { returnDocument: 'after' }
         );
     }
 
     async extendLock(slotId, userId, additionalMinutes) {
+        const appointment = await Appointment.findOne({ _id: slotId, lockedBy: userId, status: 'locked' }).select('createdAt lockExpiryTime');
+        if (!appointment) return null;
+
+        const maxExpiryTime = new Date(new Date(appointment.createdAt).getTime() + 5 * 60 * 1000);
+        const requestedExpiryTime = new Date(Date.now() + additionalMinutes * 60 * 1000);
+        const lockExpiryTime = new Date(Math.min(requestedExpiryTime.getTime(), maxExpiryTime.getTime()));
+        if (lockExpiryTime <= new Date()) return null;
+
         return await Appointment.findOneAndUpdate(
-            { _id: slotId, lockedBy: userId, status: 'locked' },
-            { $set: { lockExpiryTime: new Date(Date.now() + additionalMinutes * 60 * 1000) } },
+            { _id: slotId, lockedBy: userId, status: 'locked', lockExpiryTime: { $gt: new Date() } },
+            { $set: { lockExpiryTime } },
             { returnDocument: 'after' }
         );
     }
@@ -167,7 +174,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     async findExpiredLocks(currentTime) {
         return await Appointment.find({
             status: 'locked',
-            lockExpiryTime: { $lt: currentTime }
+            lockExpiryTime: { $lte: currentTime }
         });
     }
 
@@ -178,7 +185,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     }
 
     async findByDoctorIdWithPatientDetails(doctorId) {
-        return await Appointment.find({ 
+        return await Appointment.find({
             doctorId,
             status: { $in: ['scheduled', 'completed', 'no-show', 'cancelled', 'cancelled_by_doctor', 'disputed', 'refunded'] }
         })
@@ -265,7 +272,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             const hasValidPatientWait = (app.patientAttendanceLogs || []).some(log => {
                 if (!log.joinedAt) return false;
                 const joinMs = new Date(log.joinedAt).getTime();
-                
+
                 // If log ended before or at scheduled start time, ignore completely (Rule 1)
                 if (log.leftAt && new Date(log.leftAt).getTime() <= windowStartMs) {
                     return false;
@@ -294,8 +301,8 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             });
 
             const hasConsultationStarted = Boolean(
-                app.hasOverlapped || 
-                app.sessionStartedAt || 
+                app.hasOverlapped ||
+                app.sessionStartedAt ||
                 (app.doctorJoinedAt && app.patientJoinedAt)
             );
 
@@ -323,7 +330,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             const dateStr = app.appointmentDate ? new Date(app.appointmentDate).toISOString().split('T')[0] : null;
             const slotDurationMins = Number(app.doctorId?.slotDuration) || 15;
             const slotExactUTC = app.scheduledStartAt ? new Date(app.scheduledStartAt) : getSlotExactUTC(dateStr, app.appointmentTime, app.doctorTimezone || 'Asia/Kolkata');
-            
+
             let lateJoinCutoffUTC;
             if (app.lateJoinCutoffAt) {
                 lateJoinCutoffUTC = new Date(app.lateJoinCutoffAt);
@@ -343,7 +350,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
             const hasValidPatientWait = (app.patientAttendanceLogs || []).some(log => {
                 if (!log.joinedAt) return false;
                 const joinMs = new Date(log.joinedAt).getTime();
-                
+
                 // If log ended before or at scheduled start time, ignore completely (Rule 1)
                 if (log.leftAt && new Date(log.leftAt).getTime() <= windowStartMs) {
                     return false;
@@ -432,7 +439,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                             socketService.emitToUser(dId, 'consultation_completed', { appointmentId: app._id.toString(), status: 'completed' });
                         }
                     }
-                } catch (_) {}
+                } catch (_) { }
             } else if (hasValidPatientWait && (!app.doctorJoinedAt || !has3MinContinuous)) {
                 // 2. PATIENT REFUND RULE:
                 // If patient met 1-min requirement during valid window, BUT doctor failed to complete 3-min continuous consultation.
@@ -464,7 +471,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                             socketService.emitToUser(dId, 'consultation_completed', { appointmentId: app._id.toString(), status: 'no-show' });
                         }
                     }
-                } catch (_) {}
+                } catch (_) { }
             }
         }
     }
@@ -596,19 +603,19 @@ export class MongoAppointmentRepository extends AppointmentRepository {
                 populate: { path: 'profileId', select: 'firstName lastName' }
             })
             .populate('doctorId', 'firstName lastName');
-            
+
         if (!appointment) return null;
-        
+
         const doctorUser = await SharedUser.findOne({ profileId: appointment.doctorId._id, role: 'doctor' });
-        
-        const patientName = appointment.patientId?.profileId?.firstName 
+
+        const patientName = appointment.patientId?.profileId?.firstName
             ? `${appointment.patientId.profileId.firstName} ${appointment.patientId.profileId.lastName || ''}`.trim()
             : (appointment.patientId?.googleName || 'Patient');
-            
-        const doctorName = appointment.doctorId 
+
+        const doctorName = appointment.doctorId
             ? `${appointment.doctorId.firstName} ${appointment.doctorId.lastName || ''}`.trim()
             : 'Doctor';
-            
+
         return {
             patientEmail: appointment.patientId?.email,
             doctorEmail: doctorUser?.email,

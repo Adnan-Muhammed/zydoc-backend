@@ -1,0 +1,12 @@
+services:
+  backend:
+    build: .
+    container_name: zydoc-backend
+    restart: always
+    ports:
+      - "5001:5001"
+    environment:
+      - NODE_ENV=production
+      - PORT=5001
+    env_file:
+      - .env
