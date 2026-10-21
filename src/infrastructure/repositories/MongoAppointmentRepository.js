@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { AppointmentRepository } from "../../domain/repositories/AppointmentRepository.js";
 import Appointment from "../database/models/Appointment.js";
+import ExpiredSlotLock from "../database/models/ExpiredSlotLock.js";
 import Doctor from "../database/models/DoctorProfile.js";
 import Patient from "../database/models/PatientProfile.js";
 import SharedUser from "../database/models/SharedUser.js";
@@ -10,6 +11,7 @@ import Transaction from "../database/models/Transaction.js";
 import { MongoWalletRepository } from "./MongoWalletRepository.js";
 import { CreditWalletUseCase } from "../../application/usecases/wallet/CreditWalletUseCase.js";
 import { MIN_CONSULTATION_DURATION_SECONDS } from "../../config/videoCallConfig.js";
+import { MAX_SLOT_LOCK_MINUTES } from "../../config/bookingConfig.js";
 
 export class MongoAppointmentRepository extends AppointmentRepository {
     constructor(creditWalletUseCase = null) {
@@ -69,21 +71,15 @@ export class MongoAppointmentRepository extends AppointmentRepository {
         }
 
         // ── Phase 2: Atomic upsert ───────────────────────────────────────────────
-        // Mark any expired lock for this exact slot as 'expired' BEFORE the upsert
-        // so it no longer occupies the unique partial index slot.
-        // IMPORTANT: We use updateOne (not deleteOne) so the document — and its
-        // razorpayOrderId — is preserved. If Razorpay later delivers a webhook for
-        // this payment, VerifyPayment can still find the record and issue a refund.
-        await Appointment.updateOne(
-            {
-                doctorId: lockData.doctorId,
-                appointmentDate: startOfDayUTC,
-                appointmentTime: lockData.appointmentTime,
-                status: 'locked',
-                lockExpiryTime: { $lte: currentTime },
-            },
-            { $set: { status: 'expired' }, $unset: { lockedBy: 1, lockExpiryTime: 1 } }
-        );
+        // Delete a stale lock for this exact slot before inserting a new lock.
+        const staleLock = await Appointment.findOne({
+            doctorId: lockData.doctorId,
+            appointmentDate: startOfDayUTC,
+            appointmentTime: lockData.appointmentTime,
+            status: 'locked',
+            lockExpiryTime: { $lte: currentTime },
+        });
+        if (staleLock) await this.expireLockedSlot(staleLock._id);
 
         // Single atomic operation: insert a new locked document.
         // Protected by the unique partial index `unique_active_slot_per_doctor`
@@ -136,22 +132,39 @@ export class MongoAppointmentRepository extends AppointmentRepository {
         );
     }
 
-    // Called exclusively by the cron job for TTL-expired locks.
-    // Clears temporary lock data while preserving the appointment/order so
-    // VerifyPayment can refund a payment captured after the lock expired.
+    // Archive payment metadata, then delete an expired lock. Scheduled records
+    // are never matched and remain untouched.
     async expireLockedSlot(appointmentId) {
-        return await Appointment.findOneAndUpdate(
+        const expiredLock = await Appointment.findOne(
             { _id: appointmentId, status: 'locked', lockExpiryTime: { $lte: new Date() } },
-            { $set: { status: 'expired' }, $unset: { lockedBy: 1, lockExpiryTime: 1 } },
-            { returnDocument: 'after' }
-        );
+        ).lean();
+        if (!expiredLock) return null;
+
+        if (expiredLock.razorpayOrderId) {
+            await ExpiredSlotLock.updateOne(
+                { razorpayOrderId: expiredLock.razorpayOrderId },
+                { $setOnInsert: {
+                    appointmentId: expiredLock._id,
+                    razorpayOrderId: expiredLock.razorpayOrderId,
+                    fee: expiredLock.fee,
+                    feeBreakdown: expiredLock.feeBreakdown,
+                } },
+                { upsert: true }
+            );
+        }
+
+        return await Appointment.findOneAndDelete({
+            _id: expiredLock._id,
+            status: 'locked',
+            lockExpiryTime: { $lte: new Date() },
+        });
     }
 
     async extendLock(slotId, userId, additionalMinutes) {
         const appointment = await Appointment.findOne({ _id: slotId, lockedBy: userId, status: 'locked' }).select('createdAt lockExpiryTime');
         if (!appointment) return null;
 
-        const maxExpiryTime = new Date(new Date(appointment.createdAt).getTime() + 5 * 60 * 1000);
+        const maxExpiryTime = new Date(new Date(appointment.createdAt).getTime() + MAX_SLOT_LOCK_MINUTES * 60 * 1000);
         const requestedExpiryTime = new Date(Date.now() + additionalMinutes * 60 * 1000);
         const lockExpiryTime = new Date(Math.min(requestedExpiryTime.getTime(), maxExpiryTime.getTime()));
         if (lockExpiryTime <= new Date()) return null;
@@ -165,7 +178,7 @@ export class MongoAppointmentRepository extends AppointmentRepository {
 
     async confirmBooking(slotId, userId, updateData) {
         return await Appointment.findOneAndUpdate(
-            { _id: slotId, lockedBy: userId, status: 'locked' },
+            { _id: slotId, lockedBy: userId, status: 'locked', lockExpiryTime: { $gt: new Date() } },
             { $set: { status: 'scheduled', ...updateData } },
             { returnDocument: 'after' }
         );
@@ -585,10 +598,11 @@ export class MongoAppointmentRepository extends AppointmentRepository {
     }
 
     async findByOrderId(orderId) {
-        // Must match both 'locked' (concurrent webhook/frontend race) and
-        // 'expired' (payment captured after TTL) so VerifyPayment can always
-        // find the record and decide whether to confirm or refund.
-        return await Appointment.findOne({ razorpayOrderId: orderId });
+        const appointment = await Appointment.findOne({ razorpayOrderId: orderId });
+        if (appointment) return appointment;
+
+        const expiredLock = await ExpiredSlotLock.findOne({ razorpayOrderId: orderId }).lean();
+        return expiredLock ? { ...expiredLock, _id: expiredLock.appointmentId, status: 'expired' } : null;
     }
 
     async update(id, data) {

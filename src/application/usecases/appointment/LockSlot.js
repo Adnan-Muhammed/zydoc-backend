@@ -1,4 +1,5 @@
 import paymentService from "../../../infrastructure/services/PaymentService.js";
+import { MAX_SLOT_LOCK_MINUTES } from "../../../config/bookingConfig.js";
 import { 
     getSlotExactUTC, 
     getLateJoinGraceMinutes, 
@@ -60,8 +61,8 @@ export class LockSlot {
             lockData.lockExpiryTime = new Date(now.getTime() + 3 * 60 * 1000);
         } else {
             lockData.effectiveBookedDuration = slotDuration;
-            // Standard 5-minute payment lock
-            lockData.lockExpiryTime = new Date(now.getTime() + 5 * 60 * 1000);
+            // Standard payment lock; the total lock duration never exceeds five minutes.
+            lockData.lockExpiryTime = new Date(now.getTime() + MAX_SLOT_LOCK_MINUTES * 60 * 1000);
         }
 
         const lockedAppointment = await this.appointmentRepository.lockSlot(lockData);

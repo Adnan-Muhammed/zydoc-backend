@@ -3,9 +3,8 @@ import { MongoAppointmentRepository } from "../repositories/MongoAppointmentRepo
 
 const appointmentRepo = new MongoAppointmentRepository();
 
-// Run every minute
-// slot expiry cron job is commented slot expiry automatically happen on slot time out 
-// 
+// Sweep expired locks once per minute. Lock expiry itself is enforced by the
+// lockExpiryTime checks, and a new lock request also reclaims its exact slot inline.
 cron.schedule('* * * * *', async () => {
     try {
         const now = new Date();

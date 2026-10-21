@@ -17,10 +17,10 @@
 
 import {
   EARLY_JOIN_MINUTES,
-  MAX_EXTENSION_MINUTES,
   WRAP_UP_COUNTDOWN_SECONDS,
   DEFAULT_BASE_DURATION_MINUTES,
 } from '../../../config/videoCallConfig.js';
+import { getLateJoinGraceMinutes } from '../../../infrastructure/utils/timeUtils.js';
 import {
   roomActiveParticipants,
   roomStartTimes,
@@ -81,6 +81,46 @@ export class JoinWaitingRoomUseCase {
         if (this.signalingGateway.socket?.id) this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
         waitingRoomParticipants.get(waitingRoomKey)?.delete(userId);
         return;
+      }
+
+      const slotDurationMins = appointment.scheduledStartAt && appointment.scheduledEndAt
+        ? Math.round((new Date(appointment.scheduledEndAt) - new Date(appointment.scheduledStartAt)) / 60000)
+        : (Number(appointment.doctorId?.slotDuration) || DEFAULT_BASE_DURATION_MINUTES);
+      const consultationStarted = Boolean(
+        appointment.hasOverlapped ||
+        appointment.sessionStartedAt ||
+        (appointment.doctorJoinedAt && appointment.patientJoinedAt)
+      );
+      const scheduledEndMs = appointment.scheduledEndAt
+        ? new Date(appointment.scheduledEndAt).getTime()
+        : scheduledStartMs + slotDurationMins * 60000;
+
+      if (['completed', 'cancelled', 'cancelled_by_doctor', 'doctor_missed', 'patient_missed', 'no-show', 'disputed', 'refunded']
+        .includes((appointment.status || '').toLowerCase())) {
+        waitingRoomParticipants.get(waitingRoomKey)?.delete(userId);
+        return;
+      }
+
+      if (consultationStarted && nowMs >= scheduledEndMs) {
+        waitingRoomParticipants.get(waitingRoomKey)?.delete(userId);
+        return;
+      }
+
+      if (scheduledStartMs > 0 && !consultationStarted) {
+        const lateJoinCutoffMs = appointment.lateJoinCutoffAt
+          ? new Date(appointment.lateJoinCutoffAt).getTime()
+          : scheduledStartMs + getLateJoinGraceMinutes(slotDurationMins) * 60000;
+        if (nowMs >= lateJoinCutoffMs) {
+          const errMsg = {
+            code: 'JOIN_WINDOW_CLOSED',
+            message: 'The initial join window for this appointment has closed.',
+          };
+          if (this.signalingGateway.socket?.id) {
+            this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, 'call_error', errMsg);
+          }
+          waitingRoomParticipants.get(waitingRoomKey)?.delete(userId);
+          return;
+        }
       }
 
       // ──────────────────────────────────────────────────────────────────────────

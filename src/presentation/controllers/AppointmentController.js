@@ -1846,8 +1846,7 @@ export const getJoinToken = async (req, res) => {
             : (scheduledStartMs + slotDurationMins * 60000);
 
         if (scheduledStartMs > 0) {
-            // Rule 1: Patient can enter waiting room from 10 minutes before scheduled time
-            // Rule 2: Doctor can enter from 7 minutes before scheduled time
+            // Patient may enter the waiting room 10 minutes early; doctor may enter/start 7 minutes early.
             if (isPatient) {
                 const patientEarlyJoinMs = scheduledStartMs - EARLY_JOIN_MINUTES * 60000;
                 if (now < patientEarlyJoinMs) {

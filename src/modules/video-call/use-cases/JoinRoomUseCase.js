@@ -10,11 +10,9 @@ import {
   DEFAULT_BASE_DURATION_MINUTES,
 } from '../../../config/videoCallConfig.js';
  
-// ── Role-specific early-join boundaries ─────────────────────────────────────
-// Patient : can enter the waiting room from  scheduledStart - EARLY_JOIN_MINUTES  (10 min)
-// Doctor  : can join the call room only from scheduledStart - EARLY_START_MINUTES (7 min)
-// This ensures the doctor cannot enter before the early-start window that is
-// already shown to the patient on the waiting screen.
+// ── Role-specific entry boundaries ──────────────────────────────────────────
+// Patient : can enter the waiting room 10 minutes before the scheduled start.
+// Doctor  : can enter the consultation room 7 minutes before the scheduled start.
 
 // In-memory store to keep track of sessionStartedAt for each room/appointment.
 // Since it's in-memory, if the server restarts, ongoing calls will lose their timer sync.
@@ -208,9 +206,8 @@ export class JoinRoomUseCase {
             // Check if they are joining for the very first time
             const hasJoinedBefore = normalizedRole === 'doctor' ? !!appointment.doctorJoinedAt : !!appointment.patientJoinedAt;
 
-            // ── Role-specific early-join boundary check ───────────────────
-            // Doctor  → may only join from the early-start window (scheduledStart - EARLY_START_MINUTES)
-            // Patient → may join from the broader waiting-room window (scheduledStart - EARLY_JOIN_MINUTES)
+            // ── Role-specific early-entry boundary check ───────────────────
+            // Doctor may enter/start from 7 minutes early; patients may wait from 10 minutes early.
             if (normalizedRole === 'doctor') {
               const doctorEarlyStartMs = scheduledStartMs - EARLY_START_MINUTES * 60000;
               if (currentMs < doctorEarlyStartMs) {
@@ -269,9 +266,9 @@ export class JoinRoomUseCase {
                 if (userId) this.signalingGateway.emitToUser(userId, "call_error", errMsg);
                 return;
               }
-            } else if (normalizedRole === 'patient') {
-              // Initial waiting phase (consultation has NEVER started):
-              // Strict cut-off: access is blocked past lateJoinCutoffAt
+            } else {
+              // Initial waiting phase (consultation has NEVER started): both participants
+              // are blocked once the late-join cutoff passes.
               if (currentMs >= lateJoinCutoffMs) {
                 const errMsg = {
                   message: hasJoinedBefore

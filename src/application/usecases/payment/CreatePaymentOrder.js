@@ -28,7 +28,10 @@ export class CreatePaymentOrder {
     // 2. Authorization / availability check
     const isAvailable = status === 'available';
     const isLockedByCurrentUser =
-      status === 'locked' && appointment.lockedBy?.toString() === currentUserId.toString();
+      status === 'locked' &&
+      appointment.lockedBy?.toString() === currentUserId.toString() &&
+      appointment.lockExpiryTime &&
+      new Date(appointment.lockExpiryTime).getTime() > Date.now();
 
     if (!(isAvailable || isLockedByCurrentUser)) {
       throw new Error('Unfortunately, this slot was just locked by another user.');

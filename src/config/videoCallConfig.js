@@ -28,7 +28,8 @@ export const EARLY_JOIN_MINUTES = 10;
  * EARLY_START_MINUTES
  * ───────────────────
  * The earliest boundary (in minutes before ScheduledStartAt) at which
- * the live consultation call can be initiated (EarlyStartAt = ScheduledStartAt - 7 min).
+ * a doctor may enter and initiate the live consultation
+ * (EarlyStartAt = ScheduledStartAt - 7 min).
  *
  * Current value: 7 minutes
  */
