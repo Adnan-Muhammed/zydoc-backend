@@ -60,7 +60,7 @@ export class AdminAuthController {
         sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
         domain: process.env.NODE_ENV === "production" ? ".carehealth.online" : "localhost",
         path: "/",
-        maxAge: 7 * 24 * 60 * 60 * 1000, 
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
     }
   }
@@ -116,7 +116,7 @@ export class AdminAuthController {
       });
     } catch (error) {
       if (error.message.includes('Unauthorized Google Account') || error.message.includes('Invalid admin account')) {
-         return res.status(403).json({ success: false, message: error.message });
+        return res.status(403).json({ success: false, message: error.message });
       }
       res.status(401).json({ success: false, message: error.message });
     }

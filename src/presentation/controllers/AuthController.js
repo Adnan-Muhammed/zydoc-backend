@@ -69,7 +69,7 @@ export class AuthController {
     }
 
     return response;
-  }  
+  }
 
   // ✅ HELPER: Set Auth Cookies
   _setAuthCookies(res, accessToken, refreshToken) {
@@ -83,9 +83,9 @@ export class AuthController {
         path: "/",
         maxAge: 15 * 60 * 1000,
       });
-    } 
- 
-    
+    }
+
+
     // Refresh Token: 7 days
     if (refreshToken) {
       res.cookie("refreshToken", refreshToken, {
@@ -94,7 +94,7 @@ export class AuthController {
         sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
         domain: process.env.NODE_ENV === "production" ? ".carehealth.online" : "localhost",
         path: "/",
-        maxAge: 7 * 24 * 60 * 60 * 1000, 
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
     }
   }
@@ -210,7 +210,7 @@ export class AuthController {
       if (!userId) {
         return res.status(401).json({ success: false, message: "Unauthorized" });
       }
-      
+
       const { currentPassword, newPassword } = req.body;
       const result = await this.changePasswordUseCase.execute(userId, currentPassword, newPassword);
       res.status(200).json(result);
@@ -233,8 +233,8 @@ export class AuthController {
       });
     } catch (error) {
       if (error.name === 'UnverifiedAccountError') {
-        const errorResponse = { 
-          success: false, 
+        const errorResponse = {
+          success: false,
           message: error.message,
           requiresVerification: true,
           email: req.body.email,
@@ -275,10 +275,10 @@ export class AuthController {
     } catch (error) {
       res.status(401).json({ success: false, message: error.message });
     }
-  } 
+  }
 
   // ✅ SET ROLE
-  async setRole(req, res) { 
+  async setRole(req, res) {
     try {
       const userId = req.user?.id || req.user?._id;
       const { role } = req.body;
@@ -367,7 +367,7 @@ export class AuthController {
       // 3. Clear auth cookies with exact matching options
       this._clearAuthCookies(res);
       res.status(200).json({ success: true, message: "Logged out successfully" });
-    } catch (error) { 
+    } catch (error) {
       this._clearAuthCookies(res);
       res.status(500).json({ success: false, message: error.message });
     }
