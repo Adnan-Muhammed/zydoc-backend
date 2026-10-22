@@ -1,4 +1,5 @@
 // zydoc-backend/src/interface_adapters/controllers/AuthController.js
+import jwt from "jsonwebtoken";
 
 export class AuthController {
   constructor(
@@ -98,20 +99,18 @@ export class AuthController {
     }
   }
 
-  // ✅ HELPER: Clear Auth Cookies
+  // ✅ HELPER: Clear Auth Cookies with exact matching options
   _clearAuthCookies(res) {
-    res.clearCookie("accessToken", {
+    const isProd = process.env.NODE_ENV === "production";
+    const cookieOptions = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      secure: isProd,
+      sameSite: isProd ? "none" : "lax",
+      domain: isProd ? ".carehealth.online" : "localhost",
       path: "/",
-    });
-    res.clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      path: "/",
-    });
+    };
+    res.clearCookie("accessToken", cookieOptions);
+    res.clearCookie("refreshToken", cookieOptions);
   }
 
   // ✅ GET CURRENT USER
@@ -345,9 +344,31 @@ export class AuthController {
   // ✅ LOGOUT
   async logout(req, res) {
     try {
+      // 1. Extract userId from authenticated request or decoded token
+      let userId = req.user?.id || req.user?._id;
+
+      if (!userId) {
+        const token = req.cookies?.accessToken || req.cookies?.refreshToken;
+        if (token) {
+          try {
+            const decoded = jwt.decode(token);
+            userId = decoded?.id || decoded?._id || decoded?.userId;
+          } catch {
+            // Ignore decode failures; proceed to wipe cookies
+          }
+        }
+      }
+
+      // 2. Invalidate refresh token in database
+      if (userId && this.logoutUser) {
+        await this.logoutUser.execute(userId);
+      }
+
+      // 3. Clear auth cookies with exact matching options
       this._clearAuthCookies(res);
       res.status(200).json({ success: true, message: "Logged out successfully" });
     } catch (error) {
+      this._clearAuthCookies(res);
       res.status(500).json({ success: false, message: error.message });
     }
   }
