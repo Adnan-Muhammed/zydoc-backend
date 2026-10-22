@@ -352,6 +352,14 @@ export class JoinRoomUseCase {
 
     const numClients = this.signalingGateway.getRoomSize(roomId);
 
+    console.info("[webrtc-room] join requested", {
+      appointmentId: String(appointmentId),
+      roomId,
+      socketId: this.signalingGateway.socket?.id,
+      role: normalizedRole,
+      membersBeforeJoin: numClients,
+    });
+
     this.signalingGateway.joinRoom(roomId);
 
     // If patient joins and doctor is not in the room, notify the doctor with 20-30s buffer
@@ -513,6 +521,13 @@ export class JoinRoomUseCase {
 
     // If there is already someone in the room, notify them so they can initiate the WebRTC offer
     if (numClients > 0) {
+      console.info("[webrtc-room] notifying existing room members", {
+        appointmentId: String(appointmentId),
+        roomId,
+        joiningSocketId: this.signalingGateway.socket?.id,
+        membersAfterJoin: this.signalingGateway.getRoomSize(roomId),
+        event: "peer_joined",
+      });
       this.signalingGateway.emitToRoom(roomId, "peer_joined");
 
       try {

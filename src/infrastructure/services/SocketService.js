@@ -57,6 +57,13 @@ class SocketService {
   }
 
   handleConnection(socket) {
+    console.info("[socket] connected", {
+      socketId: socket.id,
+      role: socket.userRole,
+      origin: socket.handshake.headers?.origin,
+      transport: socket.conn?.transport?.name,
+    });
+
     // Automatically register the verified user and join their private user room
     if (socket.userId) {
       const userStr = socket.userId;
@@ -111,7 +118,12 @@ class SocketService {
     }
 
     // WebRTC disconnect is handled by the video-call module
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
+      console.info("[socket] disconnected", {
+        socketId: socket.id,
+        role: socket.userRole,
+        reason,
+      });
       for (const [userId, sockets] of this.users.entries()) {
         if (sockets.has(socket.id)) {
           sockets.delete(socket.id);

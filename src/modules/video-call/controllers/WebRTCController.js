@@ -151,14 +151,30 @@ export class WebRTCController {
     });
 
     socket.on("webrtc_offer", ({ appointmentId, offer }) => {
+      console.info("[webrtc-signal] received offer", {
+        appointmentId: appointmentId ? String(appointmentId) : undefined,
+        socketId: socket.id,
+        role: socket.userRole,
+      });
       relaySignal.execute(appointmentId, "webrtc_offer", { offer });
     });
 
     socket.on("webrtc_answer", ({ appointmentId, answer }) => {
+      console.info("[webrtc-signal] received answer", {
+        appointmentId: appointmentId ? String(appointmentId) : undefined,
+        socketId: socket.id,
+        role: socket.userRole,
+      });
       relaySignal.execute(appointmentId, "webrtc_answer", { answer });
     });
 
     socket.on("webrtc_ice_candidate", ({ appointmentId, candidate }) => {
+      console.info("[webrtc-signal] received ICE candidate", {
+        appointmentId: appointmentId ? String(appointmentId) : undefined,
+        socketId: socket.id,
+        role: socket.userRole,
+        hasCandidate: Boolean(candidate),
+      });
       relaySignal.execute(appointmentId, "webrtc_ice_candidate", { candidate });
     });
 
