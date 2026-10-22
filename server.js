@@ -131,7 +131,7 @@ const deployLogger = (req, res, next) => {
 app.use("/api/auth",deployLogger, authRoutes); // login for patient and doctor in single because shared collection shared doctors,patients
 app.use("/api/admin/auth", adminAuthRoutes);  // login for admin
 
-
+ 
 
 
 
