@@ -367,9 +367,9 @@ export class AuthController {
       // 3. Clear auth cookies with exact matching options
       this._clearAuthCookies(res);
       res.status(200).json({ success: true, message: "Logged out successfully" });
-    } catch (error) {
+    } catch (error) { 
       this._clearAuthCookies(res);
       res.status(500).json({ success: false, message: error.message });
     }
   }
-}
+} 
