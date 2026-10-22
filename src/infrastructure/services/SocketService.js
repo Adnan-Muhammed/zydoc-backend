@@ -10,9 +10,17 @@ class SocketService {
   }
 
   init(server) {
+
+     const allowedOrigins = Array.from(new Set([
+      process.env.CLIENT_URL,
+      'https://carehealth.online',
+      'https://www.carehealth.online',
+      'http://localhost:3000',
+    ].filter(Boolean)));
+
     this.io = new Server(server, {
       cors: {
-        origin: process.env.CLIENT_URL || "http://localhost:3000",
+        origin: allowedOrigins,
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         credentials: true,
       },
