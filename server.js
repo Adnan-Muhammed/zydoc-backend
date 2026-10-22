@@ -121,7 +121,14 @@ app.get("/qualifications/:filename", (req, res) => secureFileController.getFile(
 
 
 // Routes
-app.use("/api/auth", authRoutes); // login for patient and doctor in single because shared collection shared doctors,patients
+
+// 1. Create the middleware as a separate function
+const deployLogger = (req, res, next) => {
+    console.log("v1 First deploy: Auth route accessed");
+    next(); // Move to the next middleware (authRoutes)
+};
+// Call the deployLogger function in this route 
+app.use("/api/auth",deployLogger, authRoutes); // login for patient and doctor in single because shared collection shared doctors,patients
 app.use("/api/admin/auth", adminAuthRoutes);  // login for admin
 
 
