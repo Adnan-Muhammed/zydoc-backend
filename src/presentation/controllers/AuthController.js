@@ -73,26 +73,28 @@ export class AuthController {
 
   // ✅ HELPER: Set Auth Cookies
   _setAuthCookies(res, accessToken, refreshToken) {
+    const isProd = process.env.NODE_ENV === "production";
+    const domain = isProd ? (process.env.COOKIE_DOMAIN || ".carehealth.online") : undefined;
+
     // Access Token: 15 minutes
     if (accessToken) {
       res.cookie("accessToken", accessToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-        domain: process.env.NODE_ENV === "production" ? ".carehealth.online" : "localhost",
+        secure: isProd,
+        sameSite: isProd ? "none" : "lax",
+        ...(domain ? { domain } : {}),
         path: "/",
         maxAge: 15 * 60 * 1000,
       });
     }
 
-
     // Refresh Token: 7 days
     if (refreshToken) {
       res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-        domain: process.env.NODE_ENV === "production" ? ".carehealth.online" : "localhost",
+        secure: isProd,
+        sameSite: isProd ? "none" : "lax",
+        ...(domain ? { domain } : {}),
         path: "/",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
@@ -102,15 +104,35 @@ export class AuthController {
   // ✅ HELPER: Clear Auth Cookies with exact matching options
   _clearAuthCookies(res) {
     const isProd = process.env.NODE_ENV === "production";
+    const domain = isProd ? (process.env.COOKIE_DOMAIN || ".carehealth.online") : undefined;
+
     const cookieOptions = {
       httpOnly: true,
       secure: isProd,
       sameSite: isProd ? "none" : "lax",
-      domain: isProd ? ".carehealth.online" : "localhost",
       path: "/",
+      expires: new Date(0),
+      maxAge: 0,
+      ...(domain ? { domain } : {}),
     };
+
+    // 1. Clear with exact parent domain attribute (for cross-subdomain *.carehealth.online)
     res.clearCookie("accessToken", cookieOptions);
     res.clearCookie("refreshToken", cookieOptions);
+
+    // 2. Clear host-only variant (in case cookie was set without domain)
+    if (domain) {
+      const hostOnlyOptions = {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: isProd ? "none" : "lax",
+        path: "/",
+        expires: new Date(0),
+        maxAge: 0,
+      };
+      res.clearCookie("accessToken", hostOnlyOptions);
+      res.clearCookie("refreshToken", hostOnlyOptions);
+    }
   }
 
   // ✅ GET CURRENT USER
@@ -342,34 +364,78 @@ export class AuthController {
   }
 
   // ✅ LOGOUT
-  async logout(req, res) {
-    try {
-      // 1. Extract userId from authenticated request or decoded token
-      let userId = req.user?.id || req.user?._id;
+  // async logout(req, res) {
+  //   try {
+  //     // 1. Extract userId from authenticated request or decoded token
+  //     let userId = req.user?.id || req.user?._id;
 
-      if (!userId) {
-        const token = req.cookies?.accessToken || req.cookies?.refreshToken;
-        if (token) {
-          try {
-            const decoded = jwt.decode(token);
-            userId = decoded?.id || decoded?._id || decoded?.userId;
-          } catch {
-            // Ignore decode failures; proceed to wipe cookies
-          }
+  //     if (!userId) {
+  //       const token = req.cookies?.accessToken || req.cookies?.refreshToken;
+  //       if (token) {
+  //         try {
+  //           const decoded = jwt.decode(token);
+  //           userId = decoded?.id || decoded?._id || decoded?.userId;
+  //         } catch {
+  //           // Ignore decode failures; proceed to wipe cookies
+  //         }
+  //       }
+  //     }
+
+  //     // 2. Invalidate refresh token in database
+  //     if (userId && this.logoutUser) {
+  //       await this.logoutUser.execute(userId);
+  //     }
+
+  //     // 3. Clear auth cookies with exact matching options
+  //     this._clearAuthCookies(res);
+  //     res.status(200).json({ success: true, message: "Logged out successfully" });
+  //   } catch (error) {
+  //     this._clearAuthCookies(res);
+  //     res.status(500).json({ success: false, message: error.message });
+  //   }
+  // }
+// zydoc-backend/src/interface_adapters/controllers/AuthController.js
+async logout(req, res) {
+  try {
+    console.log("Logout 1: Entered logout controller function");
+    
+    // 1. Extract userId from authenticated request or decoded token
+    let userId = req.user?.id || req.user?._id;
+    console.log("Logout 2: Extracted userId from req.user ->", userId);
+
+    if (!userId) {
+      const token = req.cookies?.accessToken || req.cookies?.refreshToken;
+      console.log("Logout 3: userId not in req.user, checking cookies for token ->", !!token);
+      
+      if (token) {
+        try {
+          const decoded = jwt.decode(token);
+          userId = decoded?.id || decoded?._id || decoded?.userId;
+          console.log("Logout 4: Decoded userId from token ->", userId);
+        } catch (err) {
+          console.log("Logout 5: Token decode failed ->", err.message);
         }
       }
-
-      // 2. Invalidate refresh token in database
-      if (userId && this.logoutUser) {
-        await this.logoutUser.execute(userId);
-      }
-
-      // 3. Clear auth cookies with exact matching options
-      this._clearAuthCookies(res);
-      res.status(200).json({ success: true, message: "Logged out successfully" });
-    } catch (error) {
-      this._clearAuthCookies(res);
-      res.status(500).json({ success: false, message: error.message });
     }
+
+    // 2. Invalidate refresh token in database
+    if (userId && this.logoutUser) {
+      console.log("Logout 6: Executing logoutUser use case for userId ->", userId);
+      await this.logoutUser.execute(userId);
+    } else {
+      console.log("Logout 7: Skipped database invalidation (No userId or logoutUser use case missing)");
+    }
+
+    // 3. Clear auth cookies with exact matching options
+    console.log("Logout 8: Calling _clearAuthCookies");
+    this._clearAuthCookies(res);
+    
+    console.log("Logout 9: Sending 200 success response");
+    res.status(200).json({ success: true, message: "Logged out successfully" });
+  } catch (error) {
+    console.error("Logout 10: Error occurred during logout ->", error.message);
+    this._clearAuthCookies(res);
+    res.status(500).json({ success: false, message: error.message });
   }
+}
 } 
