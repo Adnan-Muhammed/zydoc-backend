@@ -117,6 +117,10 @@ router.get(
 router.post(
   "/:id/approve",
   protect,
+  (req, res, next) => {
+    console.log("Approve doctor route hit", 123," moving to next middleware...");
+    next(); 
+  },
   canManageDoctors,
   (req, res) => adminDoctorController.approveDoctor(req, res)
 );
