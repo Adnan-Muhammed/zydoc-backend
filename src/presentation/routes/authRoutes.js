@@ -35,7 +35,7 @@ router.patch("/set-role", protect, (req, res) => {
 });
 router.post("/refresh", (req, res) => authController.refresh(req, res));
 router.post("/logout", 
-  (req, res, next) => {
+  (req, res, next) => { 
     console.log("Logout route hit",123);
     next(); // Move to the next middleware (authRoutes)
 },

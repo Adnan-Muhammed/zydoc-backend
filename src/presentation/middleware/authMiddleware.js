@@ -5,7 +5,7 @@ import { JwtService } from "../../infrastructure/security/JwtService.js";
 const jwtService = new JwtService();
 
 /**
- * 🔒 Protect routes — requires a valid access token
+ * 🔒 Protect routes — requires a valid access token 
  * Reads from cookie first, then Authorization header
  */
 export const protect = (req, res, next) => {

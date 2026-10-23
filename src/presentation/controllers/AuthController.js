@@ -143,7 +143,7 @@ export class AuthController {
         return res.status(401).json({ message: "Unauthorized" });
       }
       const user = await this.getUserProfile.execute(userId);
-
+ 
       res.status(200).json({
         success: true,
         user: this._mapUserResponse(user),
