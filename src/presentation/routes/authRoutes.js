@@ -6,7 +6,7 @@ import { redirectIfAuth, protect } from "../middleware/authMiddleware.js";
 const router = express.Router();
 
 // Routes
-router.post(
+router.post( 
   "/signup",
   redirectIfAuth,
   (req, res) => authController.signup(req, res),
@@ -26,7 +26,7 @@ router.post("/change-password", protect, (req, res) => authController.changePass
 
 router.post("/login", redirectIfAuth, (req, res) =>
   authController.login(req, res),
-);
+); 
 router.post("/google", redirectIfAuth, (req, res) =>
   authController.googleLogin(req, res),
 );
@@ -34,7 +34,12 @@ router.patch("/set-role", protect, (req, res) => {
   return authController.setRole(req, res);
 });
 router.post("/refresh", (req, res) => authController.refresh(req, res));
-router.post("/logout", (req, res) => authController.logout(req, res));
+router.post("/logout", 
+  (req, res, next) => { 
+    console.log("Logout route hit",123);
+    next(); // Move to the next middleware (authRoutes)
+},
+ (req, res) => authController.logout(req, res));
 router.get("/me", protect, (req, res) =>
   authController.getCurrentUser(req, res),
 );

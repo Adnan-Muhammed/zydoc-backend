@@ -9,7 +9,7 @@ export class AdminAuthController {
     this.logoutUser = logoutUser;
   }
 
-  // ✅ HELPER: Map User Response
+  // ✅ HELPER: Map User Response 
   _mapUserResponse(user) {
     const response = {
       _id: user.id || user._id,
@@ -40,13 +40,16 @@ export class AdminAuthController {
 
   // ✅ HELPER: Set Auth Cookies
   _setAuthCookies(res, accessToken, refreshToken) {
+    const isProd = process.env.NODE_ENV === "production";
+    const domain = isProd ? (process.env.COOKIE_DOMAIN || ".carehealth.online") : undefined;
+
     // Access Token: 15 minutes
     if (accessToken) {
       res.cookie("accessToken", accessToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-        domain: process.env.NODE_ENV === "production" ? ".carehealth.online" : "localhost",
+        secure: isProd,
+        sameSite: isProd ? "none" : "lax",
+        ...(domain ? { domain } : {}),
         path: "/",
         maxAge: 15 * 60 * 1000,
       });
@@ -56,11 +59,11 @@ export class AdminAuthController {
     if (refreshToken) {
       res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-        domain: process.env.NODE_ENV === "production" ? ".carehealth.online" : "localhost",
+        secure: isProd,
+        sameSite: isProd ? "none" : "lax",
+        ...(domain ? { domain } : {}),
         path: "/",
-        maxAge: 7 * 24 * 60 * 60 * 1000, 
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
     }
   }
@@ -68,15 +71,35 @@ export class AdminAuthController {
   // ✅ HELPER: Clear Auth Cookies with exact matching options
   _clearAuthCookies(res) {
     const isProd = process.env.NODE_ENV === "production";
+    const domain = isProd ? (process.env.COOKIE_DOMAIN || ".carehealth.online") : undefined;
+
     const cookieOptions = {
       httpOnly: true,
       secure: isProd,
       sameSite: isProd ? "none" : "lax",
-      domain: isProd ? ".carehealth.online" : "localhost",
       path: "/",
+      expires: new Date(0),
+      maxAge: 0,
+      ...(domain ? { domain } : {}),
     };
+
+    // 1. Clear with exact parent domain attribute (for cross-subdomain *.carehealth.online)
     res.clearCookie("accessToken", cookieOptions);
     res.clearCookie("refreshToken", cookieOptions);
+
+    // 2. Clear host-only variant (in case cookie was set without domain)
+    if (domain) {
+      const hostOnlyOptions = {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: isProd ? "none" : "lax",
+        path: "/",
+        expires: new Date(0),
+        maxAge: 0,
+      };
+      res.clearCookie("accessToken", hostOnlyOptions);
+      res.clearCookie("refreshToken", hostOnlyOptions);
+    }
   }
 
   // ✅ ADMIN LOGIN (Email + Password)
@@ -116,7 +139,7 @@ export class AdminAuthController {
       });
     } catch (error) {
       if (error.message.includes('Unauthorized Google Account') || error.message.includes('Invalid admin account')) {
-         return res.status(403).json({ success: false, message: error.message });
+        return res.status(403).json({ success: false, message: error.message });
       }
       res.status(401).json({ success: false, message: error.message });
     }

@@ -25,29 +25,41 @@ export class UpdatePatientProfile {
       lastName: profileData.lastName,
       phone: profileData.phone,
       dateOfBirth: profileData.dateOfBirth,
-      gender: profileData.gender,
-      bloodGroup: profileData.bloodGroup,
-      
+
       emergencyContact: {
-          name: profileData.emergencyContactName || "",
-          relationship: profileData.emergencyContactRelationship || "",
-          phone: profileData.emergencyContactPhone || ""
+          name: profileData.emergencyContactName || profileData.emergencyContact?.name || "",
+          relationship: profileData.emergencyContactRelationship || profileData.emergencyContact?.relationship || "",
+          phone: profileData.emergencyContactPhone || profileData.emergencyContact?.phone || ""
       },
-      
+
       address: {
-          street: profileData.street || "",
-          city: profileData.city || "",
-          state: profileData.state || "",
-          zipCode: profileData.zipCode || "",
-          country: profileData.country || ""
+          street: profileData.street || profileData.address?.street || "",
+          city: profileData.city || profileData.address?.city || "",
+          state: profileData.state || profileData.address?.state || "",
+          zipCode: profileData.zipCode || profileData.address?.zipCode || "",
+          country: profileData.country || profileData.address?.country || ""
       },
-      
+
       medicalHistory: {
-          allergies: profileData.allergies ? profileData.allergies.split(',').map(s => s.trim()).filter(Boolean) : [],
-          chronicConditions: profileData.chronicConditions ? profileData.chronicConditions.split(',').map(s => s.trim()).filter(Boolean) : [],
-          currentMedications: profileData.currentMedications ? profileData.currentMedications.split(',').map(s => s.trim()).filter(Boolean) : []
+          allergies: profileData.allergies
+              ? profileData.allergies.split(',').map((s) => s.trim()).filter(Boolean)
+              : (profileData.medicalHistory?.allergies || []),
+          chronicConditions: profileData.chronicConditions
+              ? profileData.chronicConditions.split(',').map((s) => s.trim()).filter(Boolean)
+              : (profileData.medicalHistory?.chronicConditions || []),
+          currentMedications: profileData.currentMedications
+              ? profileData.currentMedications.split(',').map((s) => s.trim()).filter(Boolean)
+              : (profileData.medicalHistory?.currentMedications || [])
       }
     };
+
+    // Only include enum fields when a valid value is provided — prevents Mongoose
+    // validation failures when the user leaves optional dropdowns blank.
+    const gender = profileData.gender;
+    if (gender && gender !== "") updateData.gender = gender;
+
+    const bloodGroup = profileData.bloodGroup;
+    if (bloodGroup && bloodGroup !== "") updateData.bloodGroup = bloodGroup;
 
     if (avatar) {
       if (s3StorageService.isConfigured()) {

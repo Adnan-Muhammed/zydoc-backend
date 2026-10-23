@@ -5,7 +5,7 @@ export class LogoutUser {
 
     async execute(userId) {
         const user = await this.userRepository.findById(userId);
-        if (user) {
+        if (user) { 
             user.refreshToken = null;
             await this.userRepository.update(user);
         }

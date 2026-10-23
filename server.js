@@ -52,6 +52,9 @@ startStuckAppointmentAuditCron();
 const app = express();
 const PORT = process.env.PORT; // Use a different port than existing backend
 
+// Trust reverse proxy (Nginx / AWS ALB) so secure cookies work in production
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(performanceTracker);
 app.use(express.json());
@@ -131,7 +134,7 @@ const deployLogger = (req, res, next) => {
 app.use("/api/auth",deployLogger, authRoutes); // login for patient and doctor in single because shared collection shared doctors,patients
 app.use("/api/admin/auth", adminAuthRoutes);  // login for admin
 
-
+ 
 
 
 

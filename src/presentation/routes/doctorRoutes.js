@@ -51,11 +51,16 @@ const doctorController = new DoctorController(
  */
 export const validateDoctorAvatar = (userRepo) => async (req, res, next) => {
   try {
-    const avatarFile = req.files?.avatar?.[0];
+    const avatarFile = req.file?.fieldname === "avatar"
+      ? req.file
+      : (Array.isArray(req.files)
+          ? req.files.find((f) => f.fieldname === "avatar")
+          : req.files?.avatar?.[0]);
+
     let avatarUrl = req.body?.avatarUrl;
     if (!avatarUrl && req.body?.data) {
       try {
-        const parsed = JSON.parse(req.body.data);
+        const parsed = typeof req.body.data === "string" ? JSON.parse(req.body.data) : req.body.data;
         avatarUrl = parsed?.avatarUrl;
       } catch (_) {}
     }
