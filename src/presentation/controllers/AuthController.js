@@ -178,6 +178,7 @@ export class AuthController {
         success: true,
         message: "Account verified and logged in",
         user: this._mapUserResponse(user),
+        accessToken,
       });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
@@ -252,6 +253,7 @@ export class AuthController {
         success: true,
         message: "Login successful",
         user: this._mapUserResponse(user),
+        accessToken,
       });
     } catch (error) {
       if (error.name === 'UnverifiedAccountError') {

@@ -44,7 +44,11 @@ export class DoctorController {
                 return res.status(400).json({ success: false, message: "Invalid profile data format" });
             }
 
-            const avatarFile = req.files?.avatar?.[0];
+            const avatarFile = req.file?.fieldname === "avatar"
+                ? req.file
+                : (Array.isArray(req.files)
+                    ? req.files.find((f) => f.fieldname === "avatar")
+                    : req.files?.avatar?.[0]);
             const avatarUrl = profileData.avatarUrl || req.body?.avatarUrl;
 
             if (!avatarFile && !avatarUrl) {
@@ -79,7 +83,9 @@ export class DoctorController {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-                domain: process.env.NODE_ENV === 'production' ? '.carehealth.online' : 'localhost',
+                ...(process.env.NODE_ENV === 'production' && process.env.COOKIE_DOMAIN
+                    ? { domain: process.env.COOKIE_DOMAIN }
+                    : {}),
                 path: '/',
                 maxAge: 15 * 60 * 1000,
             });
@@ -88,6 +94,7 @@ export class DoctorController {
                 success: true,
                 message: "Profile updated successfully",
                 user: mappedUser,
+                accessToken: newAccessToken,
             });
 
         } catch (error) {

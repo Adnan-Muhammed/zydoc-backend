@@ -24,13 +24,15 @@ export class UpdateDoctorProfile {
     // Extract uploaded files
     // ─────────────────────────────────────
 
-    const avatar = files?.avatar?.[0];
+    const avatar = Array.isArray(files) ? files.find(f => f.fieldname === 'avatar') : files?.avatar?.[0];
 
-    const medicalCertificate = files?.medicalCertificate?.[0];
+    const medicalCertificate = Array.isArray(files) ? files.find(f => f.fieldname === 'medicalCertificate') : files?.medicalCertificate?.[0];
 
-    const governmentId = files?.governmentId?.[0];
+    const governmentId = Array.isArray(files) ? files.find(f => f.fieldname === 'governmentId') : files?.governmentId?.[0];
 
-    const qualificationCertificates = files?.qualificationCertificates || [];
+    const qualificationCertificates = Array.isArray(files) 
+      ? files.filter(f => f.fieldname === 'qualificationCertificates') 
+      : (files?.qualificationCertificates || []);
 
     // ─────────────────────────────────────
     // Validate Consultation & Working Hours

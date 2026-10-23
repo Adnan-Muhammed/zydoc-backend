@@ -33,21 +33,24 @@ export class PatientController {
         files
       );
 
+      let newAccessToken;
+
       if (this.jwtService) {
-          const newAccessToken = this.jwtService.generateAccessToken({
+          newAccessToken = this.jwtService.generateAccessToken({
               id: updatedPatient.id || updatedPatient._id,
               role: updatedPatient.role,
               isProfileCompleted: true,
-          }); 
- 
+          });
 
-           //   this line cuurently 2 minutes 
-            // but i want to be 15 days
+          //   this line cuurently 2 minutes 
+          // but i want to be 15 days
           res.cookie('accessToken', newAccessToken, {
               httpOnly: true,
               secure: process.env.NODE_ENV === 'production',
               sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-              domain: process.env.NODE_ENV === 'production' ? '.carehealth.online' : 'localhost',
+              ...(process.env.NODE_ENV === 'production' && process.env.COOKIE_DOMAIN
+                  ? { domain: process.env.COOKIE_DOMAIN }
+                  : {}),
               path: '/',
               maxAge: 15 * 60 * 1000,
           });
@@ -57,6 +60,7 @@ export class PatientController {
         success: true,
         message: "Patient profile updated successfully",
         data: updatedPatient,
+        ...(newAccessToken ? { accessToken: newAccessToken } : {}),
       });
     } catch (error) {
       if (error.message.includes("already linked")) {
