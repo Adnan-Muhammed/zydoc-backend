@@ -125,7 +125,7 @@ export class UpdateDoctorProfile {
 
       licenseNumber: profileData.licenseNumber,
 
-      yearsOfExperience: profileData.yearsOfExperience,
+      yearsOfExperience: Number(profileData.yearsOfExperience) || 0,
 
       slotDuration: Number(profileData.slotDuration) || 15,
 
@@ -157,6 +157,7 @@ export class UpdateDoctorProfile {
 
         return {
           ...q,
+          year: Number(q.year) || q.year,
           certificateName: certFile ? certFile.originalname.substring(certFile.originalname.indexOf('___') + 3) : q.certificateName || "",
           certificateUrl: finalUrl,
           certificateStatus: "pending",
