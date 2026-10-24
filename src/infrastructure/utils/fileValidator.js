@@ -164,10 +164,18 @@ export function validateFileContent(file, policy) {
   // Ensure detected magic bytes align with the file extension
   const sigInfo = FILE_SIGNATURES[detectedType];
   if (!sigInfo.exts.includes(ext)) {
-    return {
-      valid: false,
-      error: `File extension "${ext}" conflicts with detected content format "${detectedType}".`,
-    };
+    // If the detected type itself is allowed by policy (e.g. valid PNG uploaded with .jpeg extension),
+    // safely normalize the originalname extension to match the true content format.
+    if (policy.allowedTypes.includes(detectedType)) {
+      const properExt = sigInfo.exts[0];
+      const base = path.basename(file.originalname || 'upload', ext);
+      file.originalname = `${base}${properExt}`;
+    } else {
+      return {
+        valid: false,
+        error: `File extension "${ext}" conflicts with detected content format "${detectedType}".`,
+      };
+    }
   }
 
   return { valid: true, detectedType };

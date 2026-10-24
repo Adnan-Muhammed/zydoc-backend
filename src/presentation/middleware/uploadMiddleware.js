@@ -161,6 +161,8 @@ export function verifyUploadSignatures(policyResolver) {
         return res.status(400).json({
           success: false,
           message: check.error || 'File validation failed: invalid format or corrupted file content.',
+          field: file.fieldname,
+          filename: file.originalname,
         });
       }
     }
