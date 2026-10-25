@@ -127,7 +127,7 @@ app.get("/qualifications/:filename", (req, res) => secureFileController.getFile(
 
 // 1. Create the middleware as a separate function
 const deployLogger = (req, res, next) => {
-    console.log("v1 First deploy: Auth route accessed");
+    console.log("v1 First deploy: Auth route accessed","its success but there are some minor bugs");
     next(); // Move to the next middleware (authRoutes)
 };
 // Call the deployLogger function in this route 
