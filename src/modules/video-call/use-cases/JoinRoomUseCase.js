@@ -175,34 +175,25 @@ export class JoinRoomUseCase {
             return; // Block join
           }
 
-          // Bug 9: Doctor busy lock
-          if (userId && role?.toLowerCase() === 'patient') {
-            for (const [rId, participants] of roomActiveParticipants.entries()) {
-              if (rId !== roomId && participants.has(appointment.doctorId.toString())) {
-                const errMsg = { message: "Your doctor is currently completing another consultation. Please wait." };
-                if (this.signalingGateway.socket?.id) {
-                  this.signalingGateway.emitToSocket(this.signalingGateway.socket.id, "call_error", errMsg);
-                }
-                return;
-              }
-            }
-          }
-
           const currentTime = new Date();
           const currentMs = currentTime.getTime();
           
           let scheduledStartMs = 0;
-          const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
-          
-          if (timeStr) {
-            const scheduledStartDate = new Date(appointment.appointmentDate);
-            let [hours, minutes] = timeStr.split(":").map(Number);
-            if (modifier?.toUpperCase() === "PM" && hours < 12) hours += 12;
-            if (modifier?.toUpperCase() === "AM" && hours === 12) hours = 0;
-            scheduledStartDate.setHours(hours, minutes, 0, 0);
+          if (appointment.scheduledStartAt) {
+            scheduledStartMs = new Date(appointment.scheduledStartAt).getTime();
+          } else {
+            const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
+            if (timeStr) {
+              const scheduledStartDate = new Date(appointment.appointmentDate);
+              let [hours, minutes] = timeStr.split(":").map(Number);
+              if (modifier?.toUpperCase() === "PM" && hours < 12) hours += 12;
+              if (modifier?.toUpperCase() === "AM" && hours === 12) hours = 0;
+              scheduledStartDate.setHours(hours, minutes, 0, 0);
+              scheduledStartMs = scheduledStartDate.getTime();
+            }
+          }
             
-            scheduledStartMs = scheduledStartDate.getTime();
-            
+          if (scheduledStartMs > 0) {
             // Check if they are joining for the very first time
             const hasJoinedBefore = normalizedRole === 'doctor' ? !!appointment.doctorJoinedAt : !!appointment.patientJoinedAt;
 
@@ -412,14 +403,18 @@ export class JoinRoomUseCase {
 
               if (doctorActiveRoomId) {
                 let scheduledStartMs = 0;
-                const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
-                if (timeStr) {
-                  const scheduledStartDate = new Date(appointment.appointmentDate);
-                  let [hours, minutes] = timeStr.split(":").map(Number);
-                  if (modifier?.toUpperCase() === "PM" && hours < 12) hours += 12;
-                  if (modifier?.toUpperCase() === "AM" && hours === 12) hours = 0;
-                  scheduledStartDate.setHours(hours, minutes, 0, 0);
-                  scheduledStartMs = scheduledStartDate.getTime();
+                if (appointment.scheduledStartAt) {
+                  scheduledStartMs = new Date(appointment.scheduledStartAt).getTime();
+                } else {
+                  const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
+                  if (timeStr) {
+                    const scheduledStartDate = new Date(appointment.appointmentDate);
+                    let [hours, minutes] = timeStr.split(":").map(Number);
+                    if (modifier?.toUpperCase() === "PM" && hours < 12) hours += 12;
+                    if (modifier?.toUpperCase() === "AM" && hours === 12) hours = 0;
+                    scheduledStartDate.setHours(hours, minutes, 0, 0);
+                    scheduledStartMs = scheduledStartDate.getTime();
+                  }
                 }
 
                 console.log(`[JoinRoomUseCase] Doctor ${doctorUser._id} is in active room ${doctorActiveRoomId}. Scheduling exact time auto-cut based on new patient's slot: ${new Date(scheduledStartMs).toISOString()}`);
@@ -554,18 +549,26 @@ export class JoinRoomUseCase {
                   // This is the durable DB source of truth for re-join eligibility.
                   appointment.hasOverlapped = true;
 
-                  const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
-                  if (timeStr) {
-                    const scheduledStart = new Date(appointment.appointmentDate);
-                    let [hours, minutes] = timeStr.split(":").map(Number);
-                    if (modifier?.toUpperCase() === "PM" && hours < 12) hours += 12;
-                    if (modifier?.toUpperCase() === "AM" && hours === 12) hours = 0;
-                    scheduledStart.setHours(hours, minutes, 0, 0);
+                  let scheduledStartMs = 0;
+                  if (appointment.scheduledStartAt) {
+                    scheduledStartMs = new Date(appointment.scheduledStartAt).getTime();
+                  } else {
+                    const [timeStr, modifier] = (appointment.appointmentTime || "").trim().split(/\s+/);
+                    if (timeStr) {
+                      const scheduledStart = new Date(appointment.appointmentDate);
+                      let [hours, minutes] = timeStr.split(":").map(Number);
+                      if (modifier?.toUpperCase() === "PM" && hours < 12) hours += 12;
+                      if (modifier?.toUpperCase() === "AM" && hours === 12) hours = 0;
+                      scheduledStart.setHours(hours, minutes, 0, 0);
+                      scheduledStartMs = scheduledStart.getTime();
+                    }
+                  }
 
+                  if (scheduledStartMs > 0) {
                     const timing = calculateConsultationTiming({
                       actualStartMs: appointment.sessionStartedAt.getTime(),
-                      scheduledStartMs: scheduledStart.getTime(),
-                      scheduledEndMs: scheduledStart.getTime() + baseDurationMinutes * 60000,
+                      scheduledStartMs: scheduledStartMs,
+                      scheduledEndMs: scheduledStartMs + baseDurationMinutes * 60000,
                       durationMinutes: baseDurationMinutes,
                       maxExtensionMinutes: MAX_EXTENSION_MINUTES,
                     });

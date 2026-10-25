@@ -37,6 +37,9 @@ class SocketService {
   authenticateSocket(socket, next) {
     try {
       let token = socket.handshake.auth?.token;
+      if (!token || token === "null" || token === "undefined") {
+        token = socket.handshake.auth?.joinToken || socket.handshake.auth?.roomToken;
+      }
       if (!token && socket.handshake.headers?.authorization?.startsWith("Bearer ")) {
         token = socket.handshake.headers.authorization.split(" ")[1];
       }
@@ -51,11 +54,16 @@ class SocketService {
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET || "access_secret");
       socket.user = decoded;
-      socket.userId = (decoded.id || decoded._id)?.toString();
+      socket.userId = (decoded.id || decoded._id || decoded.userId)?.toString();
       socket.userRole = decoded.role ? decoded.role.toLowerCase() : null;
 
       if (!socket.userId) {
         return next(new Error("Unauthorized: Invalid user payload in token"));
+      }
+
+      if (decoded.type === "join_token") {
+        socket.appointmentId = decoded.appointmentId;
+        socket.joinToken = token;
       }
 
       next();

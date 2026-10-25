@@ -1900,8 +1900,10 @@ export const getJoinToken = async (req, res) => {
         // Issue Join Token
         const jti = crypto.randomUUID ? crypto.randomUUID() : new mongoose.Types.ObjectId().toString();
         const payload = {
-            appointmentId: appointment._id.toString(),
+            id: userId.toString(),
+            _id: userId.toString(),
             userId: userId.toString(),
+            appointmentId: appointment._id.toString(),
             role: userRole,
             jti,
             type: "join_token"
