@@ -12,10 +12,13 @@ import { s3StorageService } from "../services/S3StorageService.js";
 
 function normalizeDoctorAvatarUrl(avatarUrl) {
   if (!avatarUrl || typeof avatarUrl !== "string") return "";
-  const cloudfrontDomain = process.env.AWS_CLOUDFRONT_DOMAIN || "d2j3r11t01prca.cloudfront.net";
-  const cleanDomain = cloudfrontDomain.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  let cloudfrontDomain = process.env.AWS_CLOUDFRONT_DOMAIN || "d2j3r11t01prca.cloudfront.net";
+  let cleanDomain = cloudfrontDomain.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  if (!cleanDomain || cleanDomain.includes("your-distribution-id")) {
+    cleanDomain = "d2j3r11t01prca.cloudfront.net";
+  }
   if (avatarUrl.includes("your-distribution-id.cloudfront.net")) {
-    return avatarUrl.replace("your-distribution-id.cloudfront.net", cleanDomain);
+    return avatarUrl.replace(/your-distribution-id\.cloudfront\.net/g, cleanDomain);
   }
   const s3Match = avatarUrl.match(/^https?:\/\/[^/]+\.s3[.-][^/]+\.amazonaws\.com\/(.+)$/i) ||
                   avatarUrl.match(/^https?:\/\/[^/]+\.s3\.amazonaws\.com\/(.+)$/i);
