@@ -79,17 +79,40 @@ app.use(
 //  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 // };
 
+const allowedOrigins = [
+  'https://carehealth.online',
+  'https://www.carehealth.online',
+  'http://localhost:3000',
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
 const corsOptions = {
-  origin: ['https://carehealth.online', 'https://www.carehealth.online', 'http://localhost:3000','http://localhost:3000'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile native apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // In development or local testing, allow any localhost or LAN IP (192.168.x.x, 10.x.x.x, 172.x.x.x, 127.0.0.1)
+    if (process.env.NODE_ENV !== 'production') {
+      const isLocalOrLAN =
+        /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(
+          origin
+        );
+      if (isLocalOrLAN) {
+        return callback(null, true);
+      }
+    }
+
+    return callback(new Error(`CORS error: Origin ${origin} not allowed`));
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 };
 
-
-
 // Handle CORS preflight (OPTIONS) and all requests with the same cors() config
-// This ensures consistent Access-Control-* headers on BOTH preflight and actual requests
-// Note: path-to-regexp v6+ does not support bare "*" — use a regex instead
 app.options(/\/.*/, cors(corsOptions)); // Preflight handler for all routes
 app.use(cors(corsOptions));             // Actual requests
 
@@ -197,11 +220,38 @@ app.get("/", (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('[ServerError]', err.stack || err.message);
   systemMetrics.addLog(err.message || 'Unknown error occurred', 'error');
-  res.status(500).json({
+
+  // Multer file upload errors
+  if (err.name === 'MulterError') {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        success: false,
+        message: 'The uploaded file exceeds the 10 MB size limit. Please upload a smaller file.',
+        field: err.field,
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'File upload error',
+      field: err.field,
+    });
+  }
+
+  // Custom validation errors
+  if (err.code === 'INVALID_FILE_TYPE' || err.statusCode === 400) {
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+      field: err.field,
+    });
+  }
+
+  res.status(err.statusCode || 500).json({
     success: false,
-    message: "Internal Server Error",
+    message: err.message || "Internal Server Error",
+    field: err.field,
   });
 });
 
