@@ -4,6 +4,24 @@ import Appointment from "../../infrastructure/database/models/Appointment.js";
 import Doctor from "../../infrastructure/database/models/DoctorProfile.js";
 import SharedUser from "../../infrastructure/database/models/SharedUser.js";
 
+function normalizeDoctorAvatarUrl(avatarUrl) {
+  if (!avatarUrl || typeof avatarUrl !== "string") return "";
+  const cloudfrontDomain = process.env.AWS_CLOUDFRONT_DOMAIN || "d2j3r11t01prca.cloudfront.net";
+  const cleanDomain = cloudfrontDomain.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  if (avatarUrl.includes("your-distribution-id.cloudfront.net")) {
+    return avatarUrl.replace("your-distribution-id.cloudfront.net", cleanDomain);
+  }
+  const s3Match = avatarUrl.match(/^https?:\/\/[^/]+\.s3[.-][^/]+\.amazonaws\.com\/(.+)$/i) ||
+                  avatarUrl.match(/^https?:\/\/[^/]+\.s3\.amazonaws\.com\/(.+)$/i);
+  if (s3Match && s3Match[1]) {
+    return `https://${cleanDomain}/${s3Match[1]}`;
+  }
+  if (avatarUrl.startsWith("avatars/")) {
+    return `https://${cleanDomain}/${avatarUrl}`;
+  }
+  return avatarUrl;
+}
+
 export class PatientDoctorsController {
   /**
    * GET /api/patient/my-doctors
@@ -84,7 +102,11 @@ export class PatientDoctorsController {
         }
       ];
 
-      const doctors = await Appointment.aggregate(pipeline);
+      const rawDoctors = await Appointment.aggregate(pipeline);
+      const doctors = rawDoctors.map((doc) => ({
+        ...doc,
+        avatarUrl: normalizeDoctorAvatarUrl(doc.avatarUrl)
+      }));
 
       return res.status(200).json({
         success: true,
@@ -154,7 +176,7 @@ export class PatientDoctorsController {
           lastName: doctor.lastName || "",
           specialty: doctor.specialty || "General Practice",
           systemOfMedicine: doctor.systemOfMedicine || "Modern Medicine",
-          avatarUrl: doctor.avatarUrl || "",
+          avatarUrl: normalizeDoctorAvatarUrl(doctor.avatarUrl),
           yearsOfExperience: doctor.yearsOfExperience || 0,
           rating: doctor.rating || 0,
           reviewCount: doctor.reviewCount || 0,

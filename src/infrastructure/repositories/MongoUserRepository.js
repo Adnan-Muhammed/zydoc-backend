@@ -10,6 +10,24 @@ import Admin from "../database/models/AdminProfile.js";
 import Appointment from "../database/models/Appointment.js";
 import { s3StorageService } from "../services/S3StorageService.js";
 
+function normalizeDoctorAvatarUrl(avatarUrl) {
+  if (!avatarUrl || typeof avatarUrl !== "string") return "";
+  const cloudfrontDomain = process.env.AWS_CLOUDFRONT_DOMAIN || "d2j3r11t01prca.cloudfront.net";
+  const cleanDomain = cloudfrontDomain.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  if (avatarUrl.includes("your-distribution-id.cloudfront.net")) {
+    return avatarUrl.replace("your-distribution-id.cloudfront.net", cleanDomain);
+  }
+  const s3Match = avatarUrl.match(/^https?:\/\/[^/]+\.s3[.-][^/]+\.amazonaws\.com\/(.+)$/i) ||
+                  avatarUrl.match(/^https?:\/\/[^/]+\.s3\.amazonaws\.com\/(.+)$/i);
+  if (s3Match && s3Match[1]) {
+    return `https://${cleanDomain}/${s3Match[1]}`;
+  }
+  if (avatarUrl.startsWith("avatars/")) {
+    return `https://${cleanDomain}/${avatarUrl}`;
+  }
+  return avatarUrl;
+}
+
 export class MongoUserRepository extends UserRepository {
   _getModel(role) {
     const models = { 
@@ -722,7 +740,7 @@ export class MongoUserRepository extends UserRepository {
       systemOfMedicine: p.systemOfMedicine || "Modern Medicine",
       yearsOfExperience: p.yearsOfExperience,
       bio: p.bio,
-      avatarUrl: p.avatarUrl,
+      avatarUrl: normalizeDoctorAvatarUrl(p.avatarUrl),
       expertiseTags: p.expertiseTags,
       languages: p.languages,
       qualifications: Array.isArray(p.qualifications)
@@ -777,7 +795,7 @@ export class MongoUserRepository extends UserRepository {
       systemOfMedicine: doctorProfile.systemOfMedicine || "Modern Medicine",
       yearsOfExperience: doctorProfile.yearsOfExperience,
       bio: doctorProfile.bio,
-      avatarUrl: doctorProfile.avatarUrl,
+      avatarUrl: normalizeDoctorAvatarUrl(doctorProfile.avatarUrl),
       expertiseTags: doctorProfile.expertiseTags,
       languages: doctorProfile.languages,
       qualifications: Array.isArray(doctorProfile.qualifications)
@@ -814,7 +832,7 @@ export class MongoUserRepository extends UserRepository {
       systemOfMedicine: p.systemOfMedicine || "Modern Medicine",
       yearsOfExperience: p.yearsOfExperience,
       bio: p.bio,
-      avatarUrl: p.avatarUrl,
+      avatarUrl: normalizeDoctorAvatarUrl(p.avatarUrl),
       expertiseTags: p.expertiseTags,
       languages: p.languages,
       qualifications: p.qualifications,

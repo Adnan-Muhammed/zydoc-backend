@@ -231,7 +231,7 @@ export class S3StorageService {
    */
   getCloudFrontUrl(key) {
     if (!key) throw new Error("Object key is required to generate CloudFront URL.");
-    const cleanKey = this.sanitizeObjectKey(key);
+    const cleanKey = this.extractObjectKey(key);
     const cleanDomain = (this.cloudfrontDomain || "d2j3r11t01prca.cloudfront.net")
       .replace(/^https?:\/\//i, "")
       .replace(/\/+$/, "");
