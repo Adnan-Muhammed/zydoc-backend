@@ -375,7 +375,7 @@ export class JoinRoomUseCase {
               const pProfile = patientUser?.profileId || {};
               const patientName = `${pProfile.firstName || ''} ${pProfile.lastName || ''}`.trim() || patientUser?.googleName || "A patient";
 
-              // Real-time alert to doctor with 20-30s buffer
+              // Real-time alert to doctor with 20-30s buffer via Socket.io
               this.signalingGateway.emitToUser(
                 doctorUser._id.toString(),
                 "patient-arrived",
@@ -390,6 +390,31 @@ export class JoinRoomUseCase {
                   message: `${patientName} has entered the consultation room. Please join within 30 seconds.`
                 }
               );
+
+              // ── Also send FCM Push Notification to Doctor (delivers push to device if offline) ──
+              try {
+                const Doctor = mongoose.model('Doctor');
+                const doctorProfile = await Doctor.findById(appointment.doctorId).select('fcmToken');
+                if (doctorProfile && doctorProfile.fcmToken) {
+                  const { fcmService } = await import('../../../infrastructure/services/FcmService.js');
+                  await fcmService.sendToDevice(
+                    doctorProfile.fcmToken,
+                    {
+                      title: "Patient is Live",
+                      body: `${patientName} has entered the consultation room. Click to join now.`,
+                    },
+                    {
+                      appointmentId: String(appointmentId),
+                      type: "PATIENT_LIVE",
+                      link: `/doctor/consultation/${appointmentId}?join=true`,
+                      referenceId: String(appointmentId)
+                    }
+                  );
+                  console.log(`[JoinRoomUseCase] FCM push sent to Doctor ${appointment.doctorId} for live patient arrival.`);
+                }
+              } catch (fcmErr) {
+                console.warn('[JoinRoomUseCase] Error sending FCM push notification to doctor:', fcmErr.message);
+              }
 
               // ── Backend-Driven Exact Slot Time Auto-Cut (The Golden Rule) ──
               // Find if the doctor is currently in ANOTHER active consultation room

@@ -56,67 +56,62 @@ class CreateNotification {
         const isOnline = this.socketService.isUserOnline(socketUserId) ||
           (doctorSharedUserId && this.socketService.isUserOnline(doctorSharedUserId));
 
-        // 1. If doctor is connected to Socket.io, deliver real-time notification exactly once
-        if (isOnline) {
-          console.log(`[CreateNotification] Doctor ${socketUserId} is ONLINE. Delivering notification via Socket.io.`);
-          if (notification.recipientModel === 'Doctor') {
-            if (this.socketService.users && this.socketService.io) {
-              const emittedSocketIds = new Set();
-              const emitUnique = (id) => {
-                if (!id) return;
-                const sockets = this.socketService.users.get(id.toString());
-                if (sockets) {
-                  for (const socketId of sockets) {
-                    if (!emittedSocketIds.has(socketId)) {
-                      emittedSocketIds.add(socketId);
-                      this.socketService.io.to(socketId).emit('new_notification', notification);
+        // For Doctor recipients: Check for FCM token first
+        // If FCM token exists, FCM automatically routes to foreground (onMessage) when online
+        // and background (Push Notification) when offline/closed.
+        if (notification.recipientModel === 'Doctor') {
+          try {
+            const doctorProfile = await Doctor.findById(notification.recipientId).select("fcmToken");
+            if (doctorProfile && doctorProfile.fcmToken) {
+              await fcmService.sendToDevice(
+                doctorProfile.fcmToken,
+                {
+                  title: notification.title,
+                  body: notification.message,
+                },
+                {
+                  notificationId: String(notification._id),
+                  type: notification.type,
+                  link: "/doctor/appointments",
+                  referenceId: String(notification.referenceId || "")
+                }
+              );
+              console.log(`[CreateNotification] FCM successfully sent to Doctor ${notification.recipientId} (handles onMessage in foreground / push in background)`);
+            } else if (isOnline) {
+              // Fallback to Socket.io if doctor has no FCM token yet
+              console.log(`[CreateNotification] Doctor ${socketUserId} has no FCM token; falling back to Socket.io delivery.`);
+              if (this.socketService.users && this.socketService.io) {
+                const emittedSocketIds = new Set();
+                const emitUnique = (id) => {
+                  if (!id) return;
+                  const sockets = this.socketService.users.get(id.toString());
+                  if (sockets) {
+                    for (const socketId of sockets) {
+                      if (!emittedSocketIds.has(socketId)) {
+                        emittedSocketIds.add(socketId);
+                        this.socketService.io.to(socketId).emit('new_notification', notification);
+                      }
                     }
                   }
+                };
+                emitUnique(socketUserId);
+                if (doctorSharedUserId && doctorSharedUserId !== socketUserId) {
+                  emitUnique(doctorSharedUserId);
                 }
-              };
-              emitUnique(socketUserId);
-              if (doctorSharedUserId && doctorSharedUserId !== socketUserId) {
-                emitUnique(doctorSharedUserId);
-              }
-            } else {
-              // Fallback for mock socket services or custom implementations without .users map
-              if (this.socketService.isUserOnline(socketUserId)) {
+              } else {
                 this.socketService.emitToUser(socketUserId, 'new_notification', notification);
-              } else if (doctorSharedUserId && this.socketService.isUserOnline(doctorSharedUserId)) {
-                this.socketService.emitToUser(doctorSharedUserId, 'new_notification', notification);
               }
             }
-          } else {
-            this.socketService.emitToUser(socketUserId, 'new_notification', notification);
+          } catch (fcmError) {
+            console.error("[CreateNotification] FCM Push failed:", fcmError.message);
+            if (isOnline) {
+              this.socketService.emitToUser(socketUserId, 'new_notification', notification);
+            }
           }
         } else {
-          console.log(`[CreateNotification] Doctor ${socketUserId} is OFFLINE. Attempting FCM Push.`);
-          
-          // 2. If offline, send FCM Push Notification
-          if (notification.recipientModel === 'Doctor') {
-            try {
-              const doctorProfile = await Doctor.findById(notification.recipientId).select("fcmToken");
-              if (doctorProfile && doctorProfile.fcmToken) {
-                await fcmService.sendToDevice(
-                  doctorProfile.fcmToken,
-                  {
-                    title: notification.title,
-                    body: notification.message,
-                  },
-                  {
-                    notificationId: String(notification._id),
-                    type: notification.type,
-                    link: "/doctor/appointments",
-                    referenceId: String(notification.referenceId || "")
-                  }
-                );
-                console.log(`[CreateNotification] FCM successfully sent to Doctor ${notification.recipientId}`);
-              } else {
-                console.log(`[CreateNotification] Doctor ${notification.recipientId} has no FCM token. Notification skipped.`);
-              }
-            } catch (fcmError) {
-              console.error("[CreateNotification] FCM Push failed:", fcmError.message);
-            }
+          // Non-doctor recipients (Patient, etc.)
+          if (isOnline) {
+            this.socketService.emitToUser(socketUserId, 'new_notification', notification);
           }
         }
       }
