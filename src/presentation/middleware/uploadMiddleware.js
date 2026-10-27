@@ -74,7 +74,7 @@ const upload = multer({
   storage: memoryStorage,
   fileFilter: defaultFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB max ceiling
+    fileSize: 15 * 1024 * 1024, // 15MB max ceiling
     files: 25,
   },
 });
@@ -206,7 +206,7 @@ export const uploadMemory = multer({
   storage: memoryStorage,
   fileFilter: defaultFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB ceiling
+    fileSize: 15 * 1024 * 1024, // 15MB ceiling
     files: 25,
   },
 });

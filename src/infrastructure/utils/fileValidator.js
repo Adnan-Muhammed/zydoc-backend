@@ -51,14 +51,14 @@ export const UPLOAD_POLICIES = {
     label: 'Profile Photo (JPEG, PNG, WebP up to 5MB)',
   },
   VERIFICATION_DOC: {
-    allowedTypes: ['PDF', 'JPEG', 'PNG'],
+    allowedTypes: ['PDF', 'JPEG', 'PNG', 'WEBP'],
     maxSizeBytes: 10 * 1024 * 1024, // 10MB
-    label: 'Verification Document (PDF, JPEG, PNG up to 10MB)',
+    label: 'Verification Document (PDF, JPEG, PNG, WebP up to 10MB)',
   },
   QUALIFICATION: {
-    allowedTypes: ['PDF', 'JPEG', 'PNG'],
+    allowedTypes: ['PDF', 'JPEG', 'PNG', 'WEBP'],
     maxSizeBytes: 10 * 1024 * 1024, // 10MB
-    label: 'Qualification Certificate (PDF, JPEG, PNG up to 10MB)',
+    label: 'Qualification Certificate (PDF, JPEG, PNG, WebP up to 10MB)',
   },
   MEDICAL_RECORD: {
     allowedTypes: ['PDF', 'JPEG', 'PNG'],

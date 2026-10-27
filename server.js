@@ -95,18 +95,12 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // In development or local testing, allow any localhost or LAN IP (192.168.x.x, 10.x.x.x, 172.x.x.x, 127.0.0.1)
+    // In development or local testing, allow any localhost or LAN IP/port
     if (process.env.NODE_ENV !== 'production') {
-      const isLocalOrLAN =
-        /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(
-          origin
-        );
-      if (isLocalOrLAN) {
-        return callback(null, true);
-      }
+      return callback(null, true);
     }
 
-    return callback(new Error(`CORS error: Origin ${origin} not allowed`));
+    return callback(null, false);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
@@ -220,6 +214,13 @@ app.get("/", (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+  // Ensure CORS headers are present even when error happens before or during processing
+  const origin = req.headers.origin;
+  if (origin && !res.getHeader('Access-Control-Allow-Origin')) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+
   console.error('[ServerError]', err.stack || err.message);
   systemMetrics.addLog(err.message || 'Unknown error occurred', 'error');
 
@@ -228,7 +229,7 @@ app.use((err, req, res, next) => {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
         success: false,
-        message: 'The uploaded file exceeds the 10 MB size limit. Please upload a smaller file.',
+        message: 'The uploaded file exceeds the 15 MB size limit. Please upload a smaller file.',
         field: err.field,
       });
     }
