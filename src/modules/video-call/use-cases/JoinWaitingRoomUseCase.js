@@ -158,30 +158,9 @@ export class JoinWaitingRoomUseCase {
           message: "Your patient has entered the waiting room.",
         });
 
-        // ── Also send FCM Push Notification to Doctor (delivers push to device if offline) ──
-        try {
-          const Doctor = mongoose.model('Doctor');
-          const doctorProfile = await Doctor.findById(appointment.doctorId).select('fcmToken');
-          if (doctorProfile && doctorProfile.fcmToken) {
-            const { fcmService } = await import('../../../infrastructure/services/FcmService.js');
-            await fcmService.sendToDevice(
-              doctorProfile.fcmToken,
-              {
-                title: "Patient in Waiting Room",
-                body: `${patientName} has entered the waiting room for their consultation.`,
-              },
-              {
-                appointmentId: String(appointmentId),
-                type: "PATIENT_WAITING",
-                link: `/doctor/consultation/${appointmentId}?join=true`,
-                referenceId: String(appointmentId)
-              }
-            );
-            console.log(`[JoinWaitingRoomUseCase] FCM push sent to Doctor ${appointment.doctorId} for waiting patient.`);
-          }
-        } catch (fcmErr) {
-          console.warn('[JoinWaitingRoomUseCase] Error sending FCM push notification to doctor:', fcmErr.message);
-        }
+        // FCM is sent once the patient enters the consultation room in
+        // JoinRoomUseCase. Keep waiting-room delivery Socket.io-only to
+        // prevent two pushes for the same arrival.
       } catch (notifyErr) {
         console.warn('[JoinWaitingRoomUseCase] Error sending patient-arrived notification to doctor:', notifyErr);
       }
@@ -295,3 +274,5 @@ export class JoinWaitingRoomUseCase {
     }
   }
 }
+
+
