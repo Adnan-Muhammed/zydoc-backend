@@ -100,7 +100,10 @@ class CreateNotification {
     // ─────────────────────────────────────────────────────────────────────────────
     // 2. Socket.io Supplementary In-App Delivery (when socketService is provided)
     // ─────────────────────────────────────────────────────────────────────────────
-    if (this.socketService) {
+    // Booking alerts are delivered through FCM for both foreground (onMessage)
+    // and background (service worker push) states. Do not also emit these over
+    // Socket.io, which would duplicate the doctor's in-app notification.
+    if (this.socketService && !(notification.recipientModel === 'Doctor' && notification.type === 'BOOKING')) {
       try {
         if (notification.recipientModel === 'Admin' && this.socketService.emitToRoom) {
           this.socketService.emitToRoom('admin_room', 'new_notification', notification);
