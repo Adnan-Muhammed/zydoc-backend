@@ -1,6 +1,7 @@
 // src/application/usecases/patient/UpdatePatientProfile.js
 import { uploadValidatedFileToS3 } from "../../../presentation/middleware/uploadMiddleware.js";
 import { s3StorageService } from "../../../infrastructure/services/S3StorageService.js";
+import { validatePatientProfilePayload } from "../../validators/PatientProfileValidator.js";
 
 export class UpdatePatientProfile {
   constructor(userRepository) {
@@ -18,48 +19,45 @@ export class UpdatePatientProfile {
         throw new Error("User is not a patient");
     }
 
+    const { errors, clean } = validatePatientProfilePayload(profileData);
+    if (Object.keys(errors).length > 0) {
+      const validationError = new Error("Please correct the invalid profile fields.");
+      validationError.statusCode = 400;
+      validationError.validationErrors = errors;
+      throw validationError;
+    }
+
     const avatar = files?.avatar?.[0];
 
     const updateData = {
-      firstName: profileData.firstName,
-      lastName: profileData.lastName,
-      phone: profileData.phone,
-      dateOfBirth: profileData.dateOfBirth,
+      firstName: clean.firstName,
+      lastName: clean.lastName,
+      phone: clean.phone,
+      dateOfBirth: clean.dateOfBirth,
 
       emergencyContact: {
-          name: profileData.emergencyContactName || profileData.emergencyContact?.name || "",
-          relationship: profileData.emergencyContactRelationship || profileData.emergencyContact?.relationship || "",
-          phone: profileData.emergencyContactPhone || profileData.emergencyContact?.phone || ""
+          name: clean.emergencyContactName,
+          relationship: clean.emergencyContactRelationship,
+          phone: clean.emergencyContactPhone
       },
 
       address: {
-          street: profileData.street || profileData.address?.street || "",
-          city: profileData.city || profileData.address?.city || "",
-          state: profileData.state || profileData.address?.state || "",
-          zipCode: profileData.zipCode || profileData.address?.zipCode || "",
-          country: profileData.country || profileData.address?.country || ""
+          street: clean.street,
+          city: clean.city,
+          state: clean.state,
+          zipCode: clean.zipCode,
+          country: clean.country
       },
 
       medicalHistory: {
-          allergies: profileData.allergies
-              ? profileData.allergies.split(',').map((s) => s.trim()).filter(Boolean)
-              : (profileData.medicalHistory?.allergies || []),
-          chronicConditions: profileData.chronicConditions
-              ? profileData.chronicConditions.split(',').map((s) => s.trim()).filter(Boolean)
-              : (profileData.medicalHistory?.chronicConditions || []),
-          currentMedications: profileData.currentMedications
-              ? profileData.currentMedications.split(',').map((s) => s.trim()).filter(Boolean)
-              : (profileData.medicalHistory?.currentMedications || [])
+          allergies: clean.allergies.split(',').map((s) => s.trim()).filter(Boolean),
+          chronicConditions: clean.chronicConditions.split(',').map((s) => s.trim()).filter(Boolean),
+          currentMedications: clean.currentMedications.split(',').map((s) => s.trim()).filter(Boolean)
       }
     };
 
-    // Only include enum fields when a valid value is provided — prevents Mongoose
-    // validation failures when the user leaves optional dropdowns blank.
-    const gender = profileData.gender;
-    if (gender && gender !== "") updateData.gender = gender;
-
-    const bloodGroup = profileData.bloodGroup;
-    if (bloodGroup && bloodGroup !== "") updateData.bloodGroup = bloodGroup;
+    updateData.gender = clean.gender;
+    updateData.bloodGroup = clean.bloodGroup;
 
     if (avatar) {
       if (s3StorageService.isConfigured()) {

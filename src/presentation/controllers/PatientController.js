@@ -66,7 +66,11 @@ export class PatientController {
       if (error.message.includes("already linked")) {
           return res.status(409).json({ success: false, message: error.message });
       }
-      res.status(400).json({ success: false, message: error.message });
+      res.status(error.statusCode || 400).json({
+        success: false,
+        message: error.message,
+        ...(error.validationErrors ? { errors: error.validationErrors } : {}),
+      });
     }
   }
 }

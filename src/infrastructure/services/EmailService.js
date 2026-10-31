@@ -67,7 +67,7 @@ export class EmailService {
    */
   getSenderAddress() {
     const user = process.env.EMAIL_USER || 'no-reply@zydoc.com';
-    return `"ZyDoc Consulting" <${user}>`;
+    return `"Zydocare Health" <${user}>`;
   }
 
   /**
@@ -114,7 +114,7 @@ export class EmailService {
           </div>
 
           <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 15px 0 0 0;">
-            ZyDoc Security &amp; Testing Notification • Timestamp: ${new Date().toISOString()}
+            Zydocare Health Security &amp; Testing Notification • Timestamp: ${new Date().toISOString()}
           </p>
         </div>
       `,
@@ -249,7 +249,7 @@ export class EmailService {
             <p style="margin: 5px 0; color: #374151;"><strong>Fee Paid:</strong> ₹${fee}</p>
           </div>
           <p style="color: #9ca3af; font-size: 14px; text-align: center;">
-            Thank you for choosing ZyDoc Consulting.
+            Thank you for choosing Zydocare Health.
           </p>
         </div>
       `,
@@ -332,7 +332,7 @@ export class EmailService {
    * Internal generator for standard OTP verification email options.
    * @private
    */
-  _buildOtpMailOptions(email, otp, title = 'Verify Your Account', introText = 'Hello, thank you for registering with ZyDoc. Please use the verification code below to complete your registration. This code is valid for 10 minutes.') {
+  _buildOtpMailOptions(email, otp, title = 'Verify Your Account', introText = 'Hello, thank you for registering with Zydocare Health. Please use the verification code below to complete your registration. This code is valid for 10 minutes.') {
     return {
       from: this.getSenderAddress(),
       to: email,
@@ -362,7 +362,7 @@ export class EmailService {
       email,
       otp,
       'Verify Your Account',
-      'Hello, thank you for registering with ZyDoc. Please use the verification code below to complete your registration. This code is valid for 10 minutes.'
+      'Hello, thank you for registering with Zydocare Health. Please use the verification code below to complete your registration. This code is valid for 10 minutes.'
     );
 
     return await this._dispatchOtpEmail({
@@ -384,7 +384,7 @@ export class EmailService {
       email,
       otp,
       'New Verification Code',
-      'You requested a new verification code. Please use the code below to verify your ZyDoc account. This code is valid for 10 minutes.'
+      'You requested a new verification code. Please use the code below to verify your Zydocare Health account. This code is valid for 10 minutes.'
     );
 
     return await this._dispatchOtpEmail({
@@ -406,7 +406,7 @@ export class EmailService {
       email,
       otp,
       'Verify Your Account to Log In',
-      'Your ZyDoc account requires verification before logging in. Please use the code below to complete your verification.'
+      'Your Zydocare Health account requires verification before logging in. Please use the code below to complete your verification.'
     );
 
     return await this._dispatchOtpEmail({
@@ -428,7 +428,7 @@ export class EmailService {
       email,
       otp,
       'Reset Your Password',
-      'We received a request to reset your ZyDoc account password. Please use the verification code below to proceed. This code is valid for 10 minutes.'
+      'We received a request to reset your Zydocare Health account password. Please use the verification code below to proceed. This code is valid for 10 minutes.'
     );
 
     return await this._dispatchOtpEmail({
@@ -482,7 +482,7 @@ export class EmailService {
     const mailOptions = {
       from: this.getSenderAddress(),
       to: `"${patientName}" <${patientEmail}>`,
-      subject: 'Refund Request Approved - ZyDoc',
+      subject: 'Refund Request Approved - Zydocare Health',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
           <h2 style="color: #16a34a; text-align: center;">Refund Request Approved</h2>
@@ -491,7 +491,7 @@ export class EmailService {
           </p> 
           <div style="background-color: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #bbf7d0;">
             <p style="margin: 5px 0; color: #166534; font-size: 18px;"><strong>Amount Credited:</strong> ₹${refundAmount}</p>
-            <p style="margin: 5px 0; color: #374151;"><strong>Method:</strong> Credited to your ZyDoc Wallet</p>
+            <p style="margin: 5px 0; color: #374151;"><strong>Method:</strong> Credited to your Zydocare Health Wallet</p>
             ${note ? `<p style="margin: 5px 0; color: #374151;"><strong>Admin Note:</strong> ${note}</p>` : ''}
           </div>
           <p style="color: #6b7280; font-size: 14px;">
@@ -515,7 +515,7 @@ export class EmailService {
     const mailOptions = {
       from: this.getSenderAddress(),
       to: `"${patientName}" <${patientEmail}>`,
-      subject: 'Refund Request Update - ZyDoc',
+      subject: 'Refund Request Update - Zydocare Health',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
           <h2 style="color: #dc2626; text-align: center;">Refund Request Denied</h2>
@@ -526,7 +526,7 @@ export class EmailService {
             <p style="margin: 5px 0; color: #991b1b;"><strong>Reason:</strong> ${reason}</p>
           </div>
           <p style="color: #9ca3af; font-size: 14px; text-align: center;">
-            If you have questions regarding this decision, please contact ZyDoc support.
+            If you have questions regarding this decision, please contact Zydocare Health support.
           </p>
         </div>
       `,
@@ -550,12 +550,12 @@ export class EmailService {
     const mailOptions = {
       from: this.getSenderAddress(),
       to: `"${doctorName}" <${doctorEmail}>`,
-      subject: 'ZyDoc Doctor Application Approved',
+      subject: 'Zydocare Health Doctor Application Approved',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
           <h2 style="color: #16a34a; text-align: center;">Application Approved</h2>
           <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">
-            Congratulations Dr. ${doctorName}! Your application to join ZyDoc Consulting has been approved.
+            Congratulations Dr. ${doctorName}! Your application to join Zydocare Health has been approved.
           </p>
           <div style="background-color: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #bbf7d0;">
             <p style="margin: 5px 0; color: #166534;">Your profile is now verified and active. You can log in and start receiving consultation bookings.</p>
@@ -578,12 +578,12 @@ export class EmailService {
     const mailOptions = {
       from: this.getSenderAddress(),
       to: `"${doctorName}" <${doctorEmail}>`,
-      subject: 'ZyDoc Doctor Application Status Update',
+      subject: 'Zydocare Health Doctor Application Status Update',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px;">
           <h2 style="color: #dc2626; text-align: center;">Application Status Update</h2>
           <p style="color: #4b5563; font-size: 16px; line-height: 1.5;">
-            Hello Dr. ${doctorName}, thank you for your interest in ZyDoc Consulting.
+            Hello Dr. ${doctorName}, thank you for your interest in Zydocare Health.
           </p>
           <div style="background-color: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0; border: 1px solid #fecaca;">
             <p style="margin: 5px 0; color: #991b1b;"><strong>Reason:</strong> ${reason}</p>
