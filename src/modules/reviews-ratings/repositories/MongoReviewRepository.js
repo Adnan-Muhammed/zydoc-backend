@@ -44,7 +44,8 @@ export class MongoReviewRepository {
       Review.find(query)
         .populate({
           path: "patientId",
-          select: "firstName lastName googleName googleAvatarUrl avatarUrl profileId",
+          // Include roleModel because profileId uses it as its Mongoose refPath.
+          select: "firstName lastName googleName googleAvatarUrl avatarUrl profileId roleModel",
           populate: {
             path: "profileId",
             select: "firstName lastName avatarUrl",
