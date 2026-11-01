@@ -103,28 +103,23 @@ export class LeaveRoomUseCase {
                 return (overlapEnd > overlapStart) && ((overlapEnd - overlapStart) / 1000 >= 60);
               });
 
-              let totalOverlapSeconds = 0;
-              const doctorLogs = appointment.doctorAttendanceLogs || [];
-              const patientLogs = appointment.patientAttendanceLogs || [];
-
-              for (const dLog of doctorLogs) {
-                if (!dLog.joinedAt) continue;
-                const dJoin = new Date(dLog.joinedAt).getTime();
-                const dLeave = dLog.leftAt ? new Date(dLog.leftAt).getTime() : nowMs;
-
-                for (const pLog of patientLogs) {
-                  if (!pLog.joinedAt) continue;
-                  const pJoin = new Date(pLog.joinedAt).getTime();
-                  const pLeave = pLog.leftAt ? new Date(pLog.leftAt).getTime() : nowMs;
-
-                  const overlapStart = Math.max(dJoin, pJoin);
-                  const overlapEnd = Math.min(dLeave, pLeave);
-
-                  if (overlapEnd > overlapStart) {
-                    totalOverlapSeconds += (overlapEnd - overlapStart) / 1000;
-                  }
-                }
-              }
+              // Patient attendance does not control the doctor's 3-minute lock.
+              // Each doctor rejoin adds a fresh attendance log, so only the
+              // latest uninterrupted doctor-presence interval counts.
+              const latestDoctorLog = (appointment.doctorAttendanceLogs || []).slice(-1)[0];
+              const doctorPresenceEndMs = latestDoctorLog?.leftAt
+                ? new Date(latestDoctorLog.leftAt).getTime()
+                : nowMs;
+              const currentDoctorPresenceSeconds = latestDoctorLog?.joinedAt
+                ? Math.max(0, (doctorPresenceEndMs - new Date(latestDoctorLog.joinedAt).getTime()) / 1000)
+                : 0;
+              const hasCompletedDoctorPresence = (appointment.doctorAttendanceLogs || []).some(log =>
+                log.joinedAt && log.leftAt &&
+                (new Date(log.leftAt).getTime() - new Date(log.joinedAt).getTime()) / 1000 >= MIN_CONSULTATION_DURATION_SECONDS
+              );
+              const totalOverlapSeconds = hasCompletedDoctorPresence
+                ? MIN_CONSULTATION_DURATION_SECONDS
+                : currentDoctorPresenceSeconds;
 
               const has3MinContinuous = totalOverlapSeconds >= MIN_CONSULTATION_DURATION_SECONDS;
 

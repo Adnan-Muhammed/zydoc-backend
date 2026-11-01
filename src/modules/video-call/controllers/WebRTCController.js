@@ -278,7 +278,7 @@ export class WebRTCController {
     });
 
     // Handle peer disconnect for WebRTC with Rule 6: 30-Second Reconnection Grace Buffer
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
       const roomId = socket.currentVideoRoom;
       const userId = socket.userId;
       const userRole = socket.userRole;
@@ -296,6 +296,13 @@ export class WebRTCController {
       });
 
       const userKey = `${roomId}_${userId}`;
+      // A doctor's unexpected disconnect ends their current 3-minute presence
+      // interval immediately. Rejoining creates a new attendance interval and
+      // starts the lock over. Patient disconnects retain the reconnect grace.
+      if ((userRole || '').toLowerCase() === 'doctor') {
+        await leaveRoom.execute(roomId, userRole, userId, socketId);
+        return;
+      }
       if (disconnectionGraceTimers.has(userKey)) {
         clearTimeout(disconnectionGraceTimers.get(userKey).timeoutId);
       }
