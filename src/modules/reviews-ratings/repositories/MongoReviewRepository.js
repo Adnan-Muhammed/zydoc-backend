@@ -44,7 +44,7 @@ export class MongoReviewRepository {
       Review.find(query)
         .populate({
           path: "patientId",
-          select: "firstName lastName googleName avatarUrl profileId",
+          select: "firstName lastName googleName googleAvatarUrl avatarUrl profileId",
           populate: {
             path: "profileId",
             select: "firstName lastName avatarUrl",
@@ -69,7 +69,20 @@ export class MongoReviewRepository {
           },
         };
       }
-      return rev;
+      const patient = rev.patientId || {};
+      const profile = patient.profileId || {};
+      return {
+        ...rev,
+        patientId: {
+          ...patient,
+          // Patient names and profile photos live on PatientProfile, which is
+          // referenced by SharedUser.profileId rather than stored on SharedUser.
+          firstName: patient.firstName || profile.firstName || "",
+          lastName: patient.lastName || profile.lastName || "",
+          googleName: patient.googleName || "",
+          avatarUrl: patient.avatarUrl || profile.avatarUrl || patient.googleAvatarUrl || null,
+        },
+      };
     });
 
     return {

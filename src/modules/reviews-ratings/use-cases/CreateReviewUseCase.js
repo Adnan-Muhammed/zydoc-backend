@@ -61,7 +61,9 @@ export class CreateReviewUseCase {
         rating: numRating,
         comment: cleanComment,
         tags: cleanTags,
-        isAnonymous: Boolean(isAnonymous),
+        // The checkbox sends a boolean. Do not coerce strings such as "false"
+        // to true; only an explicit true value should hide the patient's name.
+        isAnonymous: isAnonymous === true || isAnonymous === "true",
       });
     } catch (err) {
       if (err.code === 11000) {
