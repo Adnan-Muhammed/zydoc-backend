@@ -547,6 +547,7 @@ export class DoctorController {
 
     _getErrorField(error) {
         if (!error) return null;
+        if (error.field) return error.field;
         const fieldMap = {
             "The phone number you provided is already linked to another doctor profile.": "phone",
             "The medical license number you entered is already registered in our system.": "licenseNumber",

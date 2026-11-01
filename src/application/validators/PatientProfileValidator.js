@@ -5,18 +5,18 @@ const cleanText = (value) => {
 };
 
 const hasLetter = (value) => /[\p{L}\p{M}]/u.test(value);
+const letterCount = (value) => [...value.matchAll(/\p{L}/gu)].length;
 const validName = (value) =>
   value.length <= 50 && hasLetter(value) && /^[\p{L}\p{M} .’'-]+$/u.test(value);
 const validPhone = (value) => {
-  const digits = value.replace(/\D/g, "");
-  return /^\+?[0-9][0-9\s().-]*$/.test(value) && digits.length >= 10 && digits.length <= 15;
+  return /^\d{10,15}$/.test(value);
 };
 const validAddress = (value) =>
   value.length >= 5 && value.length <= 200 &&
-  /[\p{L}\p{M}\p{N}]/u.test(value) && !/^0+$/.test(value.replace(/\s/g, "")) &&
+  letterCount(value) >= 2 && /[\p{L}\p{M}\p{N}]/u.test(value) && !/^0+$/.test(value.replace(/\s/g, "")) &&
   /^[\p{L}\p{M}\p{N}\s#.,'’&()/\-]+$/u.test(value);
 const validLocality = (value) =>
-  value.length >= 2 && value.length <= 100 && hasLetter(value) &&
+  value.length >= 2 && value.length <= 100 && letterCount(value) >= 2 && hasLetter(value) &&
   /^[\p{L}\p{M}\p{N}\s.'’&()/-]+$/u.test(value);
 const validPostalCode = (value) => {
   const compact = value.replace(/[\s-]/g, "");

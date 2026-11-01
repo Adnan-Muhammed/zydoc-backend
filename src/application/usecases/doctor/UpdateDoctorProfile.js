@@ -20,6 +20,33 @@ export class UpdateDoctorProfile {
       throw new Error("User not found");
     }
 
+    const reject = (message) => {
+      const error = new Error(message);
+      error.statusCode = 400;
+      throw error;
+    };
+    const hasLetters = (value) => /[\p{L}\p{M}]/u.test(value);
+    for (const [field, label] of [["firstName", "first"], ["lastName", "last"]]) {
+      const value = String(profileData[field] || "").trim();
+      if (value.length < 2 || value.length > 50 || !hasLetters(value) || !/^[\p{L}\p{M} .’'-]+$/u.test(value)) reject(`Enter a valid ${label} name.`);
+    }
+    if (!/^\d{10,15}$/.test(String(profileData.phone || ""))) reject("Phone must contain 10 to 15 digits.");
+    const specialty = String(profileData.specialty || "").trim();
+    if (specialty.length < 2 || specialty.length > 100 || !hasLetters(specialty) || !/^[\p{L}\p{M}\p{N}\s&()./-]+$/u.test(specialty)) reject("Enter a valid specialty.");
+    if (!/^[a-z\d/-]{2,50}$/i.test(String(profileData.licenseNumber || "").trim())) reject("Enter a valid license or registration number.");
+    const experience = Number(profileData.yearsOfExperience);
+    if (!Number.isInteger(experience) || experience < 0 || experience > 80) reject("Years of experience must be a whole number from 0 to 80.");
+    if (String(profileData.bio || "").length > 2000) reject("Bio must be 2,000 characters or fewer.");
+    if (!Array.isArray(profileData.qualifications) || profileData.qualifications.length === 0) reject("Add at least one qualification.");
+    for (const qualification of profileData.qualifications) {
+      const degree = String(qualification.degree || "").trim();
+      const institution = String(qualification.institution || "").trim();
+      const year = Number(qualification.year);
+      if (degree.length < 2 || degree.length > 100 || !hasLetters(degree) || !/^[\p{L}\p{M}\p{N}\s.'&(),/-]+$/u.test(degree) || institution.length < 2 || institution.length > 150 || !hasLetters(institution) || !/^[\p{L}\p{M}\p{N}\s.'&(),/-]+$/u.test(institution) || !Number.isInteger(year) || year < 1900 || year > new Date().getFullYear()) reject("Each qualification needs a valid degree, institution, and year.");
+    }
+    if (!Array.isArray(profileData.expertiseTags || []) || (profileData.expertiseTags || []).some(tag => typeof tag !== "string" || tag.trim().length < 2 || tag.trim().length > 50 || !hasLetters(tag))) reject("Enter valid expertise tags.");
+    if (!Array.isArray(profileData.languages || []) || (profileData.languages || []).some(language => typeof language !== "string" || language.trim().length < 2 || language.trim().length > 40 || !hasLetters(language))) reject("Enter valid language selections.");
+
     // ─────────────────────────────────────
     // Extract uploaded files
     // ─────────────────────────────────────
@@ -51,8 +78,8 @@ export class UpdateDoctorProfile {
 
     if (isOnline) {
       const onlineFee = consultationSettings?.online?.fee ?? consultationSettings?.video?.fee;
-      if (onlineFee === undefined || onlineFee === null || onlineFee === "") {
-        throw new Error("Telehealth fee is required.");
+      if (onlineFee === undefined || onlineFee === null || onlineFee === "" || !Number.isFinite(Number(onlineFee)) || Number(onlineFee) < 0 || Number(onlineFee) > 1000000) {
+        reject("Enter a valid telehealth fee.");
       }
       const hasOnlineDays = daysList.some(day => {
         const dayConfig = wh?.online?.[day];
@@ -66,13 +93,19 @@ export class UpdateDoctorProfile {
 
     if (isOffline) {
       const offlineFee = consultationSettings?.offline?.fee ?? consultationSettings?.physical?.fee;
-      if (offlineFee === undefined || offlineFee === null || offlineFee === "") {
-        throw new Error("In-Person fee is required.");
+      if (offlineFee === undefined || offlineFee === null || offlineFee === "" || !Number.isFinite(Number(offlineFee)) || Number(offlineFee) < 0 || Number(offlineFee) > 1000000) {
+        reject("Enter a valid in-person fee.");
       }
       const clinicName = consultationSettings?.offline?.clinicName ?? consultationSettings?.physical?.clinicName;
       const clinicAddress = consultationSettings?.offline?.clinicAddress ?? consultationSettings?.physical?.clinicAddress;
       if (!clinicName || !clinicAddress) {
         throw new Error("Clinic Title and Address are required for In-Person visits.");
+      }
+      const normalizedClinicName = String(clinicName).trim();
+      const normalizedClinicAddress = String(clinicAddress).trim();
+      if (normalizedClinicName.length < 2 || normalizedClinicName.length > 100 || !hasLetters(normalizedClinicName)) reject("Enter a valid clinic name.");
+      if (normalizedClinicAddress.length < 5 || normalizedClinicAddress.length > 200 || !hasLetters(normalizedClinicAddress) || !/^[\p{L}\p{M}\p{N}\s#.,'’&()/-]+$/u.test(normalizedClinicAddress) || /^0+$/.test(normalizedClinicAddress.replace(/[\s,.-]/g, ""))) {
+        reject("Enter a valid clinic address with a street or place name.");
       }
       const hasOfflineDays = daysList.some(day => {
         const dayConfig = wh?.offline?.[day];

@@ -10,6 +10,9 @@ export class ChangePassword {
         if (!userId || !newPassword) {
             throw new Error('UserId and new password are required');
         }
+        if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 128) {
+            throw new Error('Password must be between 8 and 128 characters');
+        }
 
         const user = await this.userRepo.findById(userId);
         if (!user) {
